@@ -42,6 +42,8 @@ const IMPORT_MAP = {
     'three': `https://unpkg.com/three@${THREE_VERSION}/build/three.module.js`,
     'three/examples/jsm/controls/OrbitControls.js':
       `https://unpkg.com/three@${THREE_VERSION}/examples/jsm/controls/OrbitControls.js`,
+    'three/examples/jsm/renderers/CSS2DRenderer.js':
+      `https://unpkg.com/three@${THREE_VERSION}/examples/jsm/renderers/CSS2DRenderer.js`,
   },
 };
 

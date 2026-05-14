@@ -215,6 +215,18 @@ html, body {
   display: none;
 }
 
+.scale-label {
+  color: white;
+  font: 10px ui-monospace, Menlo, monospace;
+  background: rgba(0,0,0,0.6);
+  padding: 2px 7px;
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 @media (max-width: 700px) {
   .app-main {
     grid-template-columns: 1fr;
