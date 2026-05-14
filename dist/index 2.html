@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Photo → Lithophane</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/examples/jsm/controls/OrbitControls.js": "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js",
+        "three/examples/jsm/renderers/CSS2DRenderer.js": "https://unpkg.com/three@0.160.0/examples/jsm/renderers/CSS2DRenderer.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <h1>Photo → Lithophane</h1>
+        <div class="header-actions">
+          <label class="file-btn" for="file-input">Open photo</label>
+          <input id="file-input" type="file" accept="image/*" hidden />
+          <button id="download-btn" class="primary-btn" disabled>Download STL</button>
+        </div>
+      </header>
+
+      <main class="app-main">
+        <aside class="controls" id="controls"></aside>
+
+        <section class="preview-wrap">
+          <div id="preview-canvas" class="preview-canvas">
+            <div class="preview-empty" id="preview-empty">
+              Open a photo to begin.<br/>
+              <small>Drag, scroll, and right-drag in here once a model loads.</small>
+            </div>
+            <div class="preview-toolbar">
+              <div class="btn-group" id="view-presets">
+                <button data-preset="front">Front</button>
+                <button data-preset="back">Back</button>
+                <button data-preset="top">Top</button>
+                <button data-preset="three-quarter" class="active">3/4</button>
+              </div>
+              <div class="btn-group" id="render-modes">
+                <button data-mode="lit" class="active">Lit</button>
+                <button data-mode="backlit">Backlit</button>
+                <button data-mode="wireframe">Wire</button>
+              </div>
+              <button id="reset-view" class="ghost-btn" title="Reset view">↺</button>
+            </div>
+            <div id="status-pill" class="status-pill"></div>
+            <div id="preview-dims" class="preview-dims"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
