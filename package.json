@@ -1,0 +1,23 @@
+{
+  "name": "lithophane-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node serve.mjs",
+    "start": "node build.mjs && node serve.mjs",
+    "test": "node --experimental-strip-types tests/verify-engine.mjs && node --experimental-strip-types tests/verify.mjs && python3 verify_stl.py",
+    "build:vite": "tsc --noEmit && vite build",
+    "dev:vite": "vite"
+  },
+  "comment": "Primary path needs no dependencies — `npm run start` builds with Node's built-in TypeScript support and serves dist/. three.js is loaded from a CDN via an import map. The optional :vite scripts require `npm install` (three, typescript, vite, @types/three).",
+  "optionalDependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.160.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0"
+  }
+}
