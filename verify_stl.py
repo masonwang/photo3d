@@ -11,7 +11,7 @@ Checks per file:
   - watertight   : every undirected edge shared by exactly 2 triangles
   - winding      : every directed half-edge used exactly once
   - degenerate   : no zero-area triangles
-  - bounding box : Z extent matches expected max thickness
+  - bounding box : Y extent matches expected max thickness (STL is vertical: X=width, Y=thickness, Z=height)
   - volume       : signed volume (divergence theorem) is positive => closed,
                    outward-facing, consistently wound
   - Euler number : V - E + F == 2 (sphere topology, i.e. one closed shell)
@@ -139,15 +139,16 @@ def check(path: Path, expected_max_z_mm: float) -> bool:
         print("  degenerate  : OK")
 
     # --- Bounding box ---
+    # STL is in vertical-print orientation: X=width, Y=thickness, Z=height.
     mn = verts.min(axis=0)
     mx = verts.max(axis=0)
     ext = mx - mn
     print(f"  extents     : {ext[0]:.2f} x {ext[1]:.2f} x {ext[2]:.2f} mm")
-    if abs(ext[2] - expected_max_z_mm) > 0.05:
-        print(f"  z extent    : FAIL (expected ~{expected_max_z_mm}, got {ext[2]:.3f})")
+    if abs(ext[1] - expected_max_z_mm) > 0.05:
+        print(f"  y extent    : FAIL (expected ~{expected_max_z_mm}, got {ext[1]:.3f})")
         ok = False
     else:
-        print(f"  z extent    : OK (~{expected_max_z_mm} mm)")
+        print(f"  y extent    : OK (~{expected_max_z_mm} mm)")
 
     # --- Signed volume (divergence theorem) ---
     # V = (1/6) * sum( v0 . (v1 x v2) ). Positive => closed & outward-wound.

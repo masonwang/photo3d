@@ -32,17 +32,20 @@ export function meshToBinaryStl(mesh: Mesh, headerText = 'lithophane-app'): Arra
   const pos = mesh.positions;
   const idx = mesh.indices;
 
-  // Reusable scratch for normal computation
-  const ax = 0, ay = 1, az = 2;
+  // Vertical-orientation transform: rotate the flat XY-plane lithophane so it
+  // stands upright for printing. Mesh coords: X=width, Y=height, Z=thickness.
+  // After transform: X=width, Y=thickness, Z=height (image stands on build plate).
+  // Transform: (x, y, z) -> (x, z, maxY - y).  Det = +1, so winding is preserved.
+  const maxY = mesh.bbox.max[1];
 
   for (let t = 0; t < triCount; t++) {
     const i0 = idx[t * 3 + 0] * 3;
     const i1 = idx[t * 3 + 1] * 3;
     const i2 = idx[t * 3 + 2] * 3;
 
-    const v0x = pos[i0], v0y = pos[i0 + 1], v0z = pos[i0 + 2];
-    const v1x = pos[i1], v1y = pos[i1 + 1], v1z = pos[i1 + 2];
-    const v2x = pos[i2], v2y = pos[i2 + 1], v2z = pos[i2 + 2];
+    const v0x = pos[i0],     v0y = pos[i0 + 2], v0z = maxY - pos[i0 + 1];
+    const v1x = pos[i1],     v1y = pos[i1 + 2], v1z = maxY - pos[i1 + 1];
+    const v2x = pos[i2],     v2y = pos[i2 + 2], v2z = maxY - pos[i2 + 1];
 
     // Edge vectors
     const e1x = v1x - v0x, e1y = v1y - v0y, e1z = v1z - v0z;
@@ -60,9 +63,6 @@ export function meshToBinaryStl(mesh: Mesh, headerText = 'lithophane-app'): Arra
       // tools recompute normals on import anyway.
       nx = 0; ny = 0; nz = 0;
     }
-
-    // Suppress unused-var lints
-    void ax; void ay; void az;
 
     view.setFloat32(offset + 0,  nx, true);
     view.setFloat32(offset + 4,  ny, true);

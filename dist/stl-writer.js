@@ -9,14 +9,14 @@ export function meshToBinaryStl(mesh, headerText = 'lithophane-app') {
     let offset = 84;
     const pos = mesh.positions;
     const idx = mesh.indices;
-    const ax = 0, ay = 1, az = 2;
+    const maxY = mesh.bbox.max[1];
     for(let t = 0; t < triCount; t++){
         const i0 = idx[t * 3 + 0] * 3;
         const i1 = idx[t * 3 + 1] * 3;
         const i2 = idx[t * 3 + 2] * 3;
-        const v0x = pos[i0], v0y = pos[i0 + 1], v0z = pos[i0 + 2];
-        const v1x = pos[i1], v1y = pos[i1 + 1], v1z = pos[i1 + 2];
-        const v2x = pos[i2], v2y = pos[i2 + 1], v2z = pos[i2 + 2];
+        const v0x = pos[i0], v0y = pos[i0 + 2], v0z = maxY - pos[i0 + 1];
+        const v1x = pos[i1], v1y = pos[i1 + 2], v1z = maxY - pos[i1 + 1];
+        const v2x = pos[i2], v2y = pos[i2 + 2], v2z = maxY - pos[i2 + 1];
         const e1x = v1x - v0x, e1y = v1y - v0y, e1z = v1z - v0z;
         const e2x = v2x - v0x, e2y = v2y - v0y, e2z = v2z - v0z;
         let nx = e1y * e2z - e1z * e2y;
@@ -32,9 +32,6 @@ export function meshToBinaryStl(mesh, headerText = 'lithophane-app') {
             ny = 0;
             nz = 0;
         }
-        void ax;
-        void ay;
-        void az;
         view.setFloat32(offset + 0, nx, true);
         view.setFloat32(offset + 4, ny, true);
         view.setFloat32(offset + 8, nz, true);
