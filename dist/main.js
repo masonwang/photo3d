@@ -4,7 +4,7 @@ import { buildMesh, updateFrontZ } from './mesh-generator.js';
 import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer.js';
 import { Preview } from './preview.js';
 import { mountControls, showStatus } from './ui.js';
-import { estimateDepth, setHfToken } from './depth-estimator.js';
+import { estimateDepth } from './depth-estimator.js';
 const store = new ParamStore();
 const controlsHost = document.getElementById('controls');
 const previewHost = document.getElementById('preview-canvas');
@@ -248,11 +248,6 @@ function mountDepthAiButton(host) {
             showStatus(statusPill, 'Open a photo first', 1500);
             return;
         }
-        if (!localStorage.getItem('hf-token')) {
-            showStatus(statusPill, 'Save a HuggingFace token below first', 2500);
-            document.getElementById('hf-token-input')?.focus();
-            return;
-        }
         useDepthAI = !useDepthAI;
         updateDepthAiButton();
         if (useDepthAI) {
@@ -263,36 +258,6 @@ function mountDepthAiButton(host) {
         }
     });
     section.appendChild(btn);
-    const tokenRow = document.createElement('div');
-    tokenRow.className = 'control-row';
-    tokenRow.style.marginTop = '8px';
-    const tokenLabel = document.createElement('label');
-    tokenLabel.htmlFor = 'hf-token-input';
-    tokenLabel.textContent = 'HF Token';
-    tokenLabel.title = 'Free HuggingFace access token — required to download the depth model';
-    const tokenInput = document.createElement('input');
-    tokenInput.type = 'password';
-    tokenInput.id = 'hf-token-input';
-    tokenInput.placeholder = 'hf_…';
-    tokenInput.value = localStorage.getItem('hf-token') || '';
-    tokenInput.style.cssText = 'flex:1;min-width:0;font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid var(--border);';
-    const tokenSave = document.createElement('button');
-    tokenSave.textContent = 'Save';
-    tokenSave.style.cssText = 'flex-shrink:0;padding:3px 8px;font-size:11px;';
-    tokenSave.addEventListener('click', ()=>{
-        const t = tokenInput.value.trim();
-        if (t) {
-            localStorage.setItem('hf-token', t);
-        } else {
-            localStorage.removeItem('hf-token');
-        }
-        setHfToken(t);
-        showStatus(statusPill, t ? 'Token saved' : 'Token cleared', 1500);
-    });
-    tokenRow.appendChild(tokenLabel);
-    tokenRow.appendChild(tokenInput);
-    tokenRow.appendChild(tokenSave);
-    section.appendChild(tokenRow);
     const blendRow = document.createElement('div');
     blendRow.className = 'control-row';
     blendRow.style.marginTop = '8px';
@@ -316,17 +281,11 @@ function mountDepthAiButton(host) {
     blendRow.appendChild(blendSlider);
     blendRow.appendChild(blendVal);
     section.appendChild(blendRow);
-    const getTokenNote = document.createElement('p');
-    getTokenNote.className = 'depth-ai-note';
-    getTokenNote.innerHTML = 'Free token: <a href="https://huggingface.co/settings/tokens" target="_blank" ' + 'style="color:var(--accent)">huggingface.co/settings/tokens</a>';
-    section.appendChild(getTokenNote);
     const note = document.createElement('p');
     note.id = 'depth-ai-note';
     note.className = 'depth-ai-note';
-    note.textContent = 'Tip: toggle "Invert" to swap near↔far. For portraits, raise Contrast to amplify subtle depth differences, or use normal (luminance) mode for finer facial detail.';
+    note.textContent = 'Tip: toggle "Invert" to swap near↔far. For portraits, raise Contrast to amplify subtle depth differences, or lower Depth mix to blend in photo surface detail.';
     note.style.display = 'none';
     section.appendChild(note);
     host.appendChild(section);
-    const saved = localStorage.getItem('hf-token');
-    if (saved) setHfToken(saved);
 }
