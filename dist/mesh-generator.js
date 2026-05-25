@@ -168,6 +168,106 @@ export function buildMesh(h, p) {
         }
     };
 }
+export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10) {
+    const x0 = panel.bbox.min[0];
+    const x1 = panel.bbox.max[0];
+    const yt = panel.bbox.max[1];
+    const yb = yt - baseHeightMm;
+    const zlo = -baseExtendMm;
+    const zhi = panel.bbox.max[2] + baseExtendMm;
+    const baseVerts = [
+        x0,
+        yb,
+        zlo,
+        x0,
+        yb,
+        zhi,
+        x1,
+        yb,
+        zlo,
+        x1,
+        yb,
+        zhi,
+        x0,
+        yt,
+        zlo,
+        x0,
+        yt,
+        zhi,
+        x1,
+        yt,
+        zlo,
+        x1,
+        yt,
+        zhi
+    ];
+    const baseTris = [
+        4,
+        5,
+        6,
+        6,
+        5,
+        7,
+        0,
+        2,
+        1,
+        2,
+        3,
+        1,
+        0,
+        4,
+        2,
+        2,
+        4,
+        6,
+        1,
+        3,
+        5,
+        3,
+        7,
+        5,
+        0,
+        1,
+        4,
+        1,
+        5,
+        4,
+        2,
+        6,
+        3,
+        6,
+        7,
+        3
+    ];
+    const vOff = panel.vertexCount;
+    const iOff = panel.triangleCount * 3;
+    const newVC = panel.vertexCount + 8;
+    const newTC = panel.triangleCount + 12;
+    const newPos = new Float32Array(newVC * 3);
+    const newIdx = new Uint32Array(newTC * 3);
+    newPos.set(panel.positions);
+    for(let i = 0; i < baseVerts.length; i++)newPos[vOff * 3 + i] = baseVerts[i];
+    newIdx.set(panel.indices);
+    for(let i = 0; i < baseTris.length; i++)newIdx[iOff + i] = vOff + baseTris[i];
+    return {
+        positions: newPos,
+        indices: newIdx,
+        vertexCount: newVC,
+        triangleCount: newTC,
+        bbox: {
+            min: [
+                x0,
+                panel.bbox.min[1],
+                zlo
+            ],
+            max: [
+                x1,
+                yt,
+                zhi
+            ]
+        }
+    };
+}
 export function updateFrontZ(positions, h, borderMm, _pixelMm, minZ, maxZ) {
     const W = h.width, H = h.height;
     for(let j = 0; j < H; j++){

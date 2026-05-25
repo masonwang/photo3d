@@ -84,6 +84,64 @@ export function meshToBinaryStl(mesh: Mesh, headerText = 'lithophane-app'): Arra
 }
 
 /**
+ * Append a watertight rectangular base box to an existing binary STL buffer.
+ * The box is in post-transform (STL/slicer) coordinates where Z is the build
+ * direction, so the base sits flat on the build plate (Z=0..baseHeightMm) and
+ * extends baseExtendMm beyond the panel on both the front and back (Y axis).
+ * This lets the panel stand upright without tipping during printing.
+ */
+export function appendBaseSolidToStl(
+  stlBuf: ArrayBuffer,
+  mesh: Mesh,
+  baseHeightMm = 3,
+  baseExtendMm = 10,
+): ArrayBuffer {
+  // Map mesh bbox to STL space: STL X = mesh X, STL Y = mesh Z, STL Z = maxY - mesh Y.
+  const x0 = mesh.bbox.min[0];
+  const x1 = mesh.bbox.max[0];
+  const y0 = -baseExtendMm;                      // behind panel back face
+  const y1 = mesh.bbox.max[2] + baseExtendMm;    // in front of panel peak
+  const z0 = 0;
+  const z1 = baseHeightMm;
+
+  // 12 triangles (6 faces × 2), CCW winding for outward normals.
+  // Each row: [nx,ny,nz, v0x,v0y,v0z, v1x,v1y,v1z, v2x,v2y,v2z]
+  const tris: number[][] = [
+    [0,0,-1, x0,y0,z0, x0,y1,z0, x1,y0,z0],  // bottom T1
+    [0,0,-1, x1,y0,z0, x0,y1,z0, x1,y1,z0],  // bottom T2
+    [0,0, 1, x0,y0,z1, x1,y0,z1, x0,y1,z1],  // top T1
+    [0,0, 1, x1,y0,z1, x1,y1,z1, x0,y1,z1],  // top T2
+    [0,-1,0, x0,y0,z0, x1,y0,z0, x0,y0,z1],  // back T1
+    [0,-1,0, x1,y0,z0, x1,y0,z1, x0,y0,z1],  // back T2
+    [0, 1,0, x0,y1,z0, x0,y1,z1, x1,y1,z0],  // front T1
+    [0, 1,0, x1,y1,z0, x0,y1,z1, x1,y1,z1],  // front T2
+    [-1,0,0, x0,y0,z0, x0,y0,z1, x0,y1,z0],  // left T1
+    [-1,0,0, x0,y0,z1, x0,y1,z1, x0,y1,z0],  // left T2
+    [ 1,0,0, x1,y0,z0, x1,y1,z0, x1,y0,z1],  // right T1
+    [ 1,0,0, x1,y0,z1, x1,y1,z0, x1,y1,z1],  // right T2
+  ];
+
+  const existingTriCount = new DataView(stlBuf).getUint32(80, true);
+  const newTriCount = existingTriCount + tris.length;
+  const newBuf = new ArrayBuffer(84 + 50 * newTriCount);
+
+  // Copy header + existing triangles verbatim
+  new Uint8Array(newBuf).set(new Uint8Array(stlBuf));
+  // Update triangle count
+  new DataView(newBuf).setUint32(80, newTriCount, true);
+
+  const view = new DataView(newBuf);
+  let offset = 84 + 50 * existingTriCount;
+  for (const t of tris) {
+    for (let i = 0; i < 12; i++) view.setFloat32(offset + i * 4, t[i], true);
+    view.setUint16(offset + 48, 0, true);
+    offset += 50;
+  }
+
+  return newBuf;
+}
+
+/**
  * Quick sanity check that a buffer "looks like" a valid binary STL we wrote.
  * Returns null on success, an error message otherwise.
  */

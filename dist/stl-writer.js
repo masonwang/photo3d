@@ -49,6 +49,197 @@ export function meshToBinaryStl(mesh, headerText = 'lithophane-app') {
     }
     return buf;
 }
+export function appendBaseSolidToStl(stlBuf, mesh, baseHeightMm = 3, baseExtendMm = 10) {
+    const x0 = mesh.bbox.min[0];
+    const x1 = mesh.bbox.max[0];
+    const y0 = -baseExtendMm;
+    const y1 = mesh.bbox.max[2] + baseExtendMm;
+    const z0 = 0;
+    const z1 = baseHeightMm;
+    const tris = [
+        [
+            0,
+            0,
+            -1,
+            x0,
+            y0,
+            z0,
+            x0,
+            y1,
+            z0,
+            x1,
+            y0,
+            z0
+        ],
+        [
+            0,
+            0,
+            -1,
+            x1,
+            y0,
+            z0,
+            x0,
+            y1,
+            z0,
+            x1,
+            y1,
+            z0
+        ],
+        [
+            0,
+            0,
+            1,
+            x0,
+            y0,
+            z1,
+            x1,
+            y0,
+            z1,
+            x0,
+            y1,
+            z1
+        ],
+        [
+            0,
+            0,
+            1,
+            x1,
+            y0,
+            z1,
+            x1,
+            y1,
+            z1,
+            x0,
+            y1,
+            z1
+        ],
+        [
+            0,
+            -1,
+            0,
+            x0,
+            y0,
+            z0,
+            x1,
+            y0,
+            z0,
+            x0,
+            y0,
+            z1
+        ],
+        [
+            0,
+            -1,
+            0,
+            x1,
+            y0,
+            z0,
+            x1,
+            y0,
+            z1,
+            x0,
+            y0,
+            z1
+        ],
+        [
+            0,
+            1,
+            0,
+            x0,
+            y1,
+            z0,
+            x0,
+            y1,
+            z1,
+            x1,
+            y1,
+            z0
+        ],
+        [
+            0,
+            1,
+            0,
+            x1,
+            y1,
+            z0,
+            x0,
+            y1,
+            z1,
+            x1,
+            y1,
+            z1
+        ],
+        [
+            -1,
+            0,
+            0,
+            x0,
+            y0,
+            z0,
+            x0,
+            y0,
+            z1,
+            x0,
+            y1,
+            z0
+        ],
+        [
+            -1,
+            0,
+            0,
+            x0,
+            y0,
+            z1,
+            x0,
+            y1,
+            z1,
+            x0,
+            y1,
+            z0
+        ],
+        [
+            1,
+            0,
+            0,
+            x1,
+            y0,
+            z0,
+            x1,
+            y1,
+            z0,
+            x1,
+            y0,
+            z1
+        ],
+        [
+            1,
+            0,
+            0,
+            x1,
+            y0,
+            z1,
+            x1,
+            y1,
+            z0,
+            x1,
+            y1,
+            z1
+        ]
+    ];
+    const existingTriCount = new DataView(stlBuf).getUint32(80, true);
+    const newTriCount = existingTriCount + tris.length;
+    const newBuf = new ArrayBuffer(84 + 50 * newTriCount);
+    new Uint8Array(newBuf).set(new Uint8Array(stlBuf));
+    new DataView(newBuf).setUint32(80, newTriCount, true);
+    const view = new DataView(newBuf);
+    let offset = 84 + 50 * existingTriCount;
+    for (const t of tris){
+        for(let i = 0; i < 12; i++)view.setFloat32(offset + i * 4, t[i], true);
+        view.setUint16(offset + 48, 0, true);
+        offset += 50;
+    }
+    return newBuf;
+}
 export function validateBinaryStlBuffer(buf) {
     if (buf.byteLength < 84) return `file too small: ${buf.byteLength} bytes`;
     const view = new DataView(buf);

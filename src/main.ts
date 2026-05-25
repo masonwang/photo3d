@@ -15,7 +15,7 @@ import {
   type Rgba,
   type Luminance,
 } from './image-processor';
-import { buildMesh, updateFrontZ, type Mesh } from './mesh-generator';
+import { buildMesh, addBaseMesh, updateFrontZ, type Mesh } from './mesh-generator';
 import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer';
 import { Preview } from './preview';
 import type { RenderMode, ViewPreset } from './preview';
@@ -39,9 +39,9 @@ let sourceBlob: Blob | null = null;  // original file for AI inference
 let lastLum: Luminance | null = null;
 let lastMesh: Mesh | null = null;
 let lastRawDepth: Luminance | null = null; // cached AI depth at model resolution
-let useDepthAI = false;
+let useDepthAI = true;
 // 0 = pure photo luminance, 1 = pure AI depth; blends the two for portraits
-let depthBlend = 0.5;
+let depthBlend = 0.7;
 
 mountControls(controlsHost, store);
 mountDepthAiButton(controlsHost);
@@ -101,7 +101,7 @@ function buildAndShow(): void {
   const { gridW, gridH } = gridSize();
   const lum = deriveLuminance(gridW, gridH);
   lastLum = lum;
-  const mesh = buildMesh(
+  const panel = buildMesh(
     { width: lum.width, height: lum.height, data: lum.data },
     {
       widthMm: p.widthMm,
@@ -110,6 +110,7 @@ function buildAndShow(): void {
       borderMm: p.borderMm,
     },
   );
+  const mesh = addBaseMesh(panel, p.baseHeightMm, p.baseExtendMm);
   lastMesh = mesh;
   preview.setMesh(mesh);
   emptyMsg.style.display = 'none';
@@ -338,4 +339,7 @@ function mountDepthAiButton(host: HTMLElement): void {
   section.appendChild(note);
 
   host.appendChild(section);
+
+  // Sync button label/note with initial useDepthAI state.
+  updateDepthAiButton();
 }

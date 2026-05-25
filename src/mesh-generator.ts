@@ -291,6 +291,80 @@ export function buildMesh(h: Heightmap, p: MeshParams): Mesh {
 }
 
 /**
+ * Append a rectangular stand base to an existing panel mesh so the print
+ * can stand upright without tipping.
+ *
+ * The base is a watertight box in mesh space that:
+ *   - spans the full panel width (X)
+ *   - sits at the bottom edge of the panel (high-Y in mesh = low-Z in STL)
+ *   - extends baseExtendMm beyond the panel on both sides in Z (= STL Y depth)
+ *
+ * Because it appends vertices after the front-grid block, updateFrontZ is
+ * unaffected — it only touches positions[0 .. W*H*3).
+ */
+export function addBaseMesh(
+  panel: Mesh,
+  baseHeightMm = 3,
+  baseExtendMm = 10,
+): Mesh {
+  const x0 = panel.bbox.min[0];
+  const x1 = panel.bbox.max[0];
+  const yt = panel.bbox.max[1];              // bottom of panel in mesh space
+  const yb = yt - baseHeightMm;             // top of base in mesh space
+  const zlo = -baseExtendMm;                // behind the back face
+  const zhi = panel.bbox.max[2] + baseExtendMm; // in front of the peak
+
+  // 8 vertices of the base box, numbered 0-7:
+  //   0:(x0,yb,zlo) 1:(x0,yb,zhi) 2:(x1,yb,zlo) 3:(x1,yb,zhi)
+  //   4:(x0,yt,zlo) 5:(x0,yt,zhi) 6:(x1,yt,zlo) 7:(x1,yt,zhi)
+  const baseVerts = [
+    x0,yb,zlo,  x0,yb,zhi,  x1,yb,zlo,  x1,yb,zhi,
+    x0,yt,zlo,  x0,yt,zhi,  x1,yt,zlo,  x1,yt,zhi,
+  ];
+
+  // 12 triangles with CCW winding (outward normals) in mesh space.
+  // Normals after the STL vertical-orientation transform (x,y,z)->(x,z,maxY-y):
+  //   +Y mesh face → -Z STL (build plate side)
+  //   -Y mesh face → +Z STL (top of base)
+  //   -Z mesh face → -Y STL (back of base)
+  //   +Z mesh face → +Y STL (front of base)
+  //   ±X mesh face → ±X STL (left/right)
+  const baseTris = [
+    4,5,6,  6,5,7,   // +Y face (yt, STL bottom)
+    0,2,1,  2,3,1,   // -Y face (yb, STL top)
+    0,4,2,  2,4,6,   // -Z face (zlo, STL back)
+    1,3,5,  3,7,5,   // +Z face (zhi, STL front)
+    0,1,4,  1,5,4,   // -X face (x0, STL left)
+    2,6,3,  6,7,3,   // +X face (x1, STL right)
+  ];
+
+  const vOff = panel.vertexCount;
+  const iOff = panel.triangleCount * 3;
+
+  const newVC = panel.vertexCount + 8;
+  const newTC = panel.triangleCount + 12;
+  const newPos = new Float32Array(newVC * 3);
+  const newIdx = new Uint32Array(newTC * 3);
+
+  newPos.set(panel.positions);
+  for (let i = 0; i < baseVerts.length; i++) newPos[vOff * 3 + i] = baseVerts[i];
+
+  newIdx.set(panel.indices);
+  for (let i = 0; i < baseTris.length; i++) newIdx[iOff + i] = vOff + baseTris[i];
+
+  return {
+    positions: newPos,
+    indices: newIdx,
+    vertexCount: newVC,
+    triangleCount: newTC,
+    bbox: {
+      min: [x0, panel.bbox.min[1], zlo],
+      max: [x1, yt, zhi],
+    },
+  };
+}
+
+/**
  * Hot-path Z update: rewrites only the front-grid Z coordinates given a new
  * luminance buffer and thickness range. Mesh structure is untouched.
  */

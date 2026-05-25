@@ -1,6 +1,6 @@
 import { ParamStore, HOT_KEYS, COLD_KEYS, FREE_KEYS } from './store.js';
 import { decodeImageToRgba, resampleRgba, rgbaToLuminance, rgbaToGrey, resampleFloat32Bilinear, applyImageParams } from './image-processor.js';
-import { buildMesh, updateFrontZ } from './mesh-generator.js';
+import { buildMesh, addBaseMesh, updateFrontZ } from './mesh-generator.js';
 import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer.js';
 import { Preview } from './preview.js';
 import { mountControls, showStatus } from './ui.js';
@@ -21,8 +21,8 @@ let sourceBlob = null;
 let lastLum = null;
 let lastMesh = null;
 let lastRawDepth = null;
-let useDepthAI = false;
-let depthBlend = 0.5;
+let useDepthAI = true;
+let depthBlend = 0.7;
 mountControls(controlsHost, store);
 mountDepthAiButton(controlsHost);
 const preview = new Preview(previewHost);
@@ -72,7 +72,7 @@ function buildAndShow() {
     const { gridW, gridH } = gridSize();
     const lum = deriveLuminance(gridW, gridH);
     lastLum = lum;
-    const mesh = buildMesh({
+    const panel = buildMesh({
         width: lum.width,
         height: lum.height,
         data: lum.data
@@ -82,6 +82,7 @@ function buildAndShow() {
         maxThicknessMm: p.maxThicknessMm,
         borderMm: p.borderMm
     });
+    const mesh = addBaseMesh(panel, p.baseHeightMm, p.baseExtendMm);
     lastMesh = mesh;
     preview.setMesh(mesh);
     emptyMsg.style.display = 'none';
@@ -288,4 +289,5 @@ function mountDepthAiButton(host) {
     note.style.display = 'none';
     section.appendChild(note);
     host.appendChild(section);
+    updateDepthAiButton();
 }

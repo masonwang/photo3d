@@ -45,6 +45,13 @@ const GROUPS: Array<{ title: string; controls: ControlSpec[] }> = [
     ],
   },
   {
+    title: 'Base',
+    controls: [
+      { kind: 'range', key: 'baseExtendMm', label: 'Width', min: 0, max: 30, step: 0.5, format: v => `${v.toFixed(1)} mm` },
+      { kind: 'range', key: 'baseHeightMm', label: 'Depth', min: 0, max: 10, step: 0.5, format: v => `${v.toFixed(1)} mm` },
+    ],
+  },
+  {
     title: 'Output',
     controls: [
       { kind: 'toggle', key: 'asciiStl', label: 'ASCII STL (debug)' },

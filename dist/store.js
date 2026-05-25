@@ -1,15 +1,17 @@
 export const defaultParams = {
-    widthMm: 100,
-    minThicknessMm: 0.8,
-    maxThicknessMm: 3.0,
+    widthMm: 30,
+    minThicknessMm: 0.5,
+    maxThicknessMm: 2.0,
     pixelsPerMm: 10,
     mirror: true,
-    invert: false,
+    invert: true,
     gamma: 1.0,
     brightness: 0,
-    contrast: 0,
+    contrast: 30,
     smoothingPx: 1,
     borderMm: 2,
+    baseExtendMm: 5,
+    baseHeightMm: 1,
     asciiStl: false
 };
 export const HOT_KEYS = new Set([
@@ -24,7 +26,9 @@ export const HOT_KEYS = new Set([
 ]);
 export const COLD_KEYS = new Set([
     'pixelsPerMm',
-    'borderMm'
+    'borderMm',
+    'baseExtendMm',
+    'baseHeightMm'
 ]);
 export const FREE_KEYS = new Set([
     'widthMm'
