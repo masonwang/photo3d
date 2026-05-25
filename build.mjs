@@ -37,6 +37,7 @@ const SRC = resolve(__dirname, 'src');
 const DIST = resolve(__dirname, 'dist');
 
 const THREE_VERSION = '0.160.0';
+const TRANSFORMERS_VERSION = '3.5.2';
 const IMPORT_MAP = {
   imports: {
     'three': `https://unpkg.com/three@${THREE_VERSION}/build/three.module.js`,
@@ -44,6 +45,10 @@ const IMPORT_MAP = {
       `https://unpkg.com/three@${THREE_VERSION}/examples/jsm/controls/OrbitControls.js`,
     'three/examples/jsm/renderers/CSS2DRenderer.js':
       `https://unpkg.com/three@${THREE_VERSION}/examples/jsm/renderers/CSS2DRenderer.js`,
+    // Transformers.js: runs Depth Anything v2 in-browser via WASM/WebGPU.
+    // Model weights (~25 MB quantized) are fetched from HuggingFace Hub at runtime.
+    '@huggingface/transformers':
+      `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${TRANSFORMERS_VERSION}/dist/transformers.min.js`,
   },
 };
 

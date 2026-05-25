@@ -227,6 +227,27 @@ html, body {
   user-select: none;
 }
 
+#depth-ai-btn {
+  width: 100%;
+  padding: 7px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+}
+#depth-ai-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.depth-ai-note {
+  font-size: 11px;
+  color: var(--text-3);
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
+
 @media (max-width: 700px) {
   .app-main {
     grid-template-columns: 1fr;

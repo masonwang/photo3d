@@ -8,6 +8,105 @@
 
 import type { Params } from './store';
 
+/** Nearest-neighbor resample of a Float32Array heightmap. */
+export function resampleFloat32(
+  src: Float32Array,
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+): Float32Array {
+  if (srcW === dstW && srcH === dstH) return src;
+  const out = new Float32Array(dstW * dstH);
+  const sx = srcW / dstW;
+  const sy = srcH / dstH;
+  for (let y = 0; y < dstH; y++) {
+    const srcY = Math.min(srcH - 1, Math.floor(y * sy));
+    for (let x = 0; x < dstW; x++) {
+      const srcX = Math.min(srcW - 1, Math.floor(x * sx));
+      out[y * dstW + x] = src[srcY * srcW + srcX];
+    }
+  }
+  return out;
+}
+
+/** Bilinear resample of a Float32Array heightmap — preserves more detail than nearest-neighbor. */
+export function resampleFloat32Bilinear(
+  src: Float32Array,
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+): Float32Array {
+  if (srcW === dstW && srcH === dstH) return src;
+  const out = new Float32Array(dstW * dstH);
+  for (let y = 0; y < dstH; y++) {
+    const fy = (y + 0.5) * (srcH / dstH) - 0.5;
+    const y0 = Math.max(0, Math.floor(fy));
+    const y1 = Math.min(srcH - 1, y0 + 1);
+    const dy = fy - y0;
+    for (let x = 0; x < dstW; x++) {
+      const fx = (x + 0.5) * (srcW / dstW) - 0.5;
+      const x0 = Math.max(0, Math.floor(fx));
+      const x1 = Math.min(srcW - 1, x0 + 1);
+      const dx = fx - x0;
+      const v00 = src[y0 * srcW + x0];
+      const v10 = src[y0 * srcW + x1];
+      const v01 = src[y1 * srcW + x0];
+      const v11 = src[y1 * srcW + x1];
+      out[y * dstW + x] = v00 * (1 - dx) * (1 - dy) + v10 * dx * (1 - dy) + v01 * (1 - dx) * dy + v11 * dx * dy;
+    }
+  }
+  return out;
+}
+
+/**
+ * Apply the image-adjustment chain (mirror → invert → brightness → contrast
+ * → gamma → smoothing) to an already-grayscale Float32Array in [0,1].
+ * Always returns a new buffer; never mutates src.
+ */
+export function applyImageParams(
+  src: Float32Array,
+  W: number,
+  H: number,
+  p: Params,
+): Luminance {
+  const out = src.slice();
+
+  if (p.mirror) {
+    for (let y = 0; y < H; y++) {
+      const row = y * W;
+      for (let x = 0; x < W / 2; x++) {
+        const a = row + x, b = row + (W - 1 - x);
+        const t = out[a]; out[a] = out[b]; out[b] = t;
+      }
+    }
+  }
+
+  if (p.invert) {
+    for (let i = 0; i < out.length; i++) out[i] = 1 - out[i];
+  }
+
+  const bAdd = p.brightness / 100;
+  if (bAdd !== 0) {
+    for (let i = 0; i < out.length; i++) out[i] = clamp01(out[i] + bAdd);
+  }
+
+  const c = (p.contrast + 100) / 100;
+  if (c !== 1) {
+    for (let i = 0; i < out.length; i++) out[i] = clamp01((out[i] - 0.5) * c + 0.5);
+  }
+
+  const g = p.gamma;
+  if (g !== 1) {
+    for (let i = 0; i < out.length; i++) out[i] = Math.pow(out[i], g);
+  }
+
+  const r = Math.max(0, Math.round(p.smoothingPx));
+  if (r > 0) return { width: W, height: H, data: boxBlur(out, W, H, r) };
+  return { width: W, height: H, data: out };
+}
+
 export type Rgba = {
   width: number;
   height: number;
@@ -53,67 +152,24 @@ export function resampleRgba(src: Rgba, targetW: number, targetH: number): Rgba 
   return { width: targetW, height: targetH, data: out };
 }
 
+/** Raw Rec.709 grayscale from RGBA, no image adjustments — used for blending. */
+export function rgbaToGrey(src: Rgba): Float32Array {
+  const { data } = src;
+  const grey = new Float32Array(src.width * src.height);
+  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+    grey[j] = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+  }
+  return grey;
+}
+
 /**
  * Convert RGBA pixels to a luminance buffer in [0,1] applying the chain:
  *   grayscale -> mirror -> invert -> brightness -> contrast -> gamma -> smoothing
  */
 export function rgbaToLuminance(src: Rgba, p: Params): Luminance {
-  const { width: W, height: H, data } = src;
-  const out = new Float32Array(W * H);
-
-  // 1) Grayscale (Rec. 709 luminance)
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    out[j] = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
-  }
-
-  // 2) Mirror horizontally (in-place row-by-row swap)
-  if (p.mirror) {
-    for (let y = 0; y < H; y++) {
-      const row = y * W;
-      for (let x = 0; x < W / 2; x++) {
-        const a = row + x;
-        const b = row + (W - 1 - x);
-        const t = out[a]; out[a] = out[b]; out[b] = t;
-      }
-    }
-  }
-
-  // 3) Invert
-  if (p.invert) {
-    for (let i = 0; i < out.length; i++) out[i] = 1 - out[i];
-  }
-
-  // 4) Brightness  (linear shift)
-  const bAdd = p.brightness / 100;
-  if (bAdd !== 0) {
-    for (let i = 0; i < out.length; i++) {
-      out[i] = clamp01(out[i] + bAdd);
-    }
-  }
-
-  // 5) Contrast (S-curve around 0.5)
-  // contrast in [-100, 100]; factor maps to roughly [0, 2]
-  const c = (p.contrast + 100) / 100;
-  if (c !== 1) {
-    for (let i = 0; i < out.length; i++) {
-      out[i] = clamp01((out[i] - 0.5) * c + 0.5);
-    }
-  }
-
-  // 6) Gamma
-  const g = p.gamma;
-  if (g !== 1) {
-    for (let i = 0; i < out.length; i++) {
-      out[i] = Math.pow(out[i], g);
-    }
-  }
-
-  // 7) Smoothing (separable box blur — fast, good enough)
-  const r = Math.max(0, Math.round(p.smoothingPx));
-  if (r > 0) {
-    return { width: W, height: H, data: boxBlur(out, W, H, r) };
-  }
-  return { width: W, height: H, data: out };
+  const { width: W, height: H } = src;
+  const grey = rgbaToGrey(src);
+  return applyImageParams(grey, W, H, p);
 }
 
 function clamp01(v: number) {

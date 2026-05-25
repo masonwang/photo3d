@@ -1,3 +1,79 @@
+export function resampleFloat32(src, srcW, srcH, dstW, dstH) {
+    if (srcW === dstW && srcH === dstH) return src;
+    const out = new Float32Array(dstW * dstH);
+    const sx = srcW / dstW;
+    const sy = srcH / dstH;
+    for(let y = 0; y < dstH; y++){
+        const srcY = Math.min(srcH - 1, Math.floor(y * sy));
+        for(let x = 0; x < dstW; x++){
+            const srcX = Math.min(srcW - 1, Math.floor(x * sx));
+            out[y * dstW + x] = src[srcY * srcW + srcX];
+        }
+    }
+    return out;
+}
+export function resampleFloat32Bilinear(src, srcW, srcH, dstW, dstH) {
+    if (srcW === dstW && srcH === dstH) return src;
+    const out = new Float32Array(dstW * dstH);
+    for(let y = 0; y < dstH; y++){
+        const fy = (y + 0.5) * (srcH / dstH) - 0.5;
+        const y0 = Math.max(0, Math.floor(fy));
+        const y1 = Math.min(srcH - 1, y0 + 1);
+        const dy = fy - y0;
+        for(let x = 0; x < dstW; x++){
+            const fx = (x + 0.5) * (srcW / dstW) - 0.5;
+            const x0 = Math.max(0, Math.floor(fx));
+            const x1 = Math.min(srcW - 1, x0 + 1);
+            const dx = fx - x0;
+            const v00 = src[y0 * srcW + x0];
+            const v10 = src[y0 * srcW + x1];
+            const v01 = src[y1 * srcW + x0];
+            const v11 = src[y1 * srcW + x1];
+            out[y * dstW + x] = v00 * (1 - dx) * (1 - dy) + v10 * dx * (1 - dy) + v01 * (1 - dx) * dy + v11 * dx * dy;
+        }
+    }
+    return out;
+}
+export function applyImageParams(src, W, H, p) {
+    const out = src.slice();
+    if (p.mirror) {
+        for(let y = 0; y < H; y++){
+            const row = y * W;
+            for(let x = 0; x < W / 2; x++){
+                const a = row + x, b = row + (W - 1 - x);
+                const t = out[a];
+                out[a] = out[b];
+                out[b] = t;
+            }
+        }
+    }
+    if (p.invert) {
+        for(let i = 0; i < out.length; i++)out[i] = 1 - out[i];
+    }
+    const bAdd = p.brightness / 100;
+    if (bAdd !== 0) {
+        for(let i = 0; i < out.length; i++)out[i] = clamp01(out[i] + bAdd);
+    }
+    const c = (p.contrast + 100) / 100;
+    if (c !== 1) {
+        for(let i = 0; i < out.length; i++)out[i] = clamp01((out[i] - 0.5) * c + 0.5);
+    }
+    const g = p.gamma;
+    if (g !== 1) {
+        for(let i = 0; i < out.length; i++)out[i] = Math.pow(out[i], g);
+    }
+    const r = Math.max(0, Math.round(p.smoothingPx));
+    if (r > 0) return {
+        width: W,
+        height: H,
+        data: boxBlur(out, W, H, r)
+    };
+    return {
+        width: W,
+        height: H,
+        data: out
+    };
+}
 export async function decodeImageToRgba(source) {
     const bmp = await createImageBitmap(source);
     const canvas = document.createElement('canvas');
@@ -37,58 +113,18 @@ export function resampleRgba(src, targetW, targetH) {
         data: out
     };
 }
-export function rgbaToLuminance(src, p) {
-    const { width: W, height: H, data } = src;
-    const out = new Float32Array(W * H);
+export function rgbaToGrey(src) {
+    const { data } = src;
+    const grey = new Float32Array(src.width * src.height);
     for(let i = 0, j = 0; i < data.length; i += 4, j++){
-        out[j] = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+        grey[j] = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
     }
-    if (p.mirror) {
-        for(let y = 0; y < H; y++){
-            const row = y * W;
-            for(let x = 0; x < W / 2; x++){
-                const a = row + x;
-                const b = row + (W - 1 - x);
-                const t = out[a];
-                out[a] = out[b];
-                out[b] = t;
-            }
-        }
-    }
-    if (p.invert) {
-        for(let i = 0; i < out.length; i++)out[i] = 1 - out[i];
-    }
-    const bAdd = p.brightness / 100;
-    if (bAdd !== 0) {
-        for(let i = 0; i < out.length; i++){
-            out[i] = clamp01(out[i] + bAdd);
-        }
-    }
-    const c = (p.contrast + 100) / 100;
-    if (c !== 1) {
-        for(let i = 0; i < out.length; i++){
-            out[i] = clamp01((out[i] - 0.5) * c + 0.5);
-        }
-    }
-    const g = p.gamma;
-    if (g !== 1) {
-        for(let i = 0; i < out.length; i++){
-            out[i] = Math.pow(out[i], g);
-        }
-    }
-    const r = Math.max(0, Math.round(p.smoothingPx));
-    if (r > 0) {
-        return {
-            width: W,
-            height: H,
-            data: boxBlur(out, W, H, r)
-        };
-    }
-    return {
-        width: W,
-        height: H,
-        data: out
-    };
+    return grey;
+}
+export function rgbaToLuminance(src, p) {
+    const { width: W, height: H } = src;
+    const grey = rgbaToGrey(src);
+    return applyImageParams(grey, W, H, p);
 }
 function clamp01(v) {
     return v < 0 ? 0 : v > 1 ? 1 : v;

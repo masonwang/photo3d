@@ -9,6 +9,9 @@ import {
   decodeImageToRgba,
   resampleRgba,
   rgbaToLuminance,
+  rgbaToGrey,
+  resampleFloat32Bilinear,
+  applyImageParams,
   type Rgba,
   type Luminance,
 } from './image-processor';
@@ -17,6 +20,7 @@ import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer';
 import { Preview } from './preview';
 import type { RenderMode, ViewPreset } from './preview';
 import { mountControls, showStatus } from './ui';
+import { estimateDepth, setHfToken } from './depth-estimator';
 
 const store = new ParamStore();
 const controlsHost = document.getElementById('controls') as HTMLElement;
@@ -30,12 +34,18 @@ const presetButtons = document.querySelectorAll<HTMLButtonElement>('#view-preset
 const modeButtons = document.querySelectorAll<HTMLButtonElement>('#render-modes button');
 const resetBtn = document.getElementById('reset-view') as HTMLButtonElement;
 
-mountControls(controlsHost, store);
-const preview = new Preview(previewHost);
-
 let sourceRgba: Rgba | null = null;
+let sourceBlob: Blob | null = null;  // original file for AI inference
 let lastLum: Luminance | null = null;
 let lastMesh: Mesh | null = null;
+let lastRawDepth: Luminance | null = null; // cached AI depth at model resolution
+let useDepthAI = false;
+// 0 = pure photo luminance, 1 = pure AI depth; blends the two for portraits
+let depthBlend = 0.5;
+
+mountControls(controlsHost, store);
+mountDepthAiButton(controlsHost);
+const preview = new Preview(previewHost);
 
 let coldPathTimer: number | null = null;
 
@@ -48,15 +58,48 @@ function updateDims(): void {
   dimsEl.style.display = 'block';
 }
 
-function buildAndShow(): void {
-  if (!sourceRgba) return;
+/** Derive the target grid size from current params and source aspect ratio. */
+function gridSize(): { gridW: number; gridH: number } {
+  if (!sourceRgba) return { gridW: 8, gridH: 8 };
   const p = store.get();
-  // Determine grid resolution from physical size.
   const gridW = Math.max(8, Math.round(p.widthMm * p.pixelsPerMm));
   const aspect = sourceRgba.height / sourceRgba.width;
   const gridH = Math.max(8, Math.round(gridW * aspect));
-  const resampled = resampleRgba(sourceRgba, gridW, gridH);
-  const lum = rgbaToLuminance(resampled, p);
+  return { gridW, gridH };
+}
+
+/** Compute luminance buffer from whichever source is active (photo or AI depth). */
+function deriveLuminance(gridW: number, gridH: number): Luminance {
+  const p = store.get();
+  if (useDepthAI && lastRawDepth) {
+    const depth = resampleFloat32Bilinear(
+      lastRawDepth.data,
+      lastRawDepth.width,
+      lastRawDepth.height,
+      gridW,
+      gridH,
+    );
+    if (depthBlend >= 1) {
+      return applyImageParams(depth, gridW, gridH, p);
+    }
+    // Blend AI depth with raw photo grayscale so portrait surface detail
+    // (captured by lighting) mixes with the AI's depth field.
+    const photo = rgbaToGrey(resampleRgba(sourceRgba!, gridW, gridH));
+    const mixed = new Float32Array(gridW * gridH);
+    for (let i = 0; i < mixed.length; i++) {
+      mixed[i] = depthBlend * depth[i] + (1 - depthBlend) * photo[i];
+    }
+    return applyImageParams(mixed, gridW, gridH, p);
+  }
+  const resampled = resampleRgba(sourceRgba!, gridW, gridH);
+  return rgbaToLuminance(resampled, p);
+}
+
+function buildAndShow(): void {
+  if (!sourceRgba) return;
+  const p = store.get();
+  const { gridW, gridH } = gridSize();
+  const lum = deriveLuminance(gridW, gridH);
   lastLum = lum;
   const mesh = buildMesh(
     { width: lum.width, height: lum.height, data: lum.data },
@@ -77,9 +120,8 @@ function buildAndShow(): void {
 function hotZUpdate(): void {
   if (!sourceRgba || !lastMesh || !lastLum) return;
   const p = store.get();
-  // Re-derive luminance with new image params.
-  const resampled = resampleRgba(sourceRgba, lastLum.width, lastLum.height);
-  const lum = rgbaToLuminance(resampled, p);
+  const { gridW, gridH } = gridSize();
+  const lum = deriveLuminance(gridW, gridH);
   lastLum = lum;
   updateFrontZ(
     lastMesh.positions,
@@ -115,8 +157,6 @@ store.subscribe(COLD_KEYS, () => {
 });
 
 store.subscribe(FREE_KEYS, () => {
-  // Width is "free": rebuild the mesh structurally (we encode width during
-  // build so the bounding box is correct for the slicer). Treat as cold for v1.
   if (!sourceRgba) return;
   scheduleColdRebuild();
 });
@@ -127,8 +167,13 @@ fileInput.addEventListener('change', async () => {
   if (!f) return;
   showStatus(statusPill, 'Decoding image…', 0);
   try {
+    sourceBlob = f;
     sourceRgba = await decodeImageToRgba(f);
-    buildAndShow();
+    if (useDepthAI) {
+      await runDepthEstimation();
+    } else {
+      buildAndShow();
+    }
     showStatus(statusPill, `Loaded ${sourceRgba.width}×${sourceRgba.height}`, 1500);
   } catch (err) {
     console.error(err);
@@ -139,8 +184,7 @@ fileInput.addEventListener('change', async () => {
 // --- Download ---
 downloadBtn.addEventListener('click', () => {
   if (!sourceRgba) return;
-  // Always export at the user's chosen resolution (no separate "export LOD" yet).
-  buildAndShow(); // ensures lastMesh is fresh
+  buildAndShow();
   if (!lastMesh) return;
   const buf = meshToBinaryStl(lastMesh, 'lithophane-app v0.1');
   const err = validateBinaryStlBuffer(buf);
@@ -195,3 +239,156 @@ window.addEventListener('keydown', (e) => {
     case 'w': preview.setMode('wireframe'); break;
   }
 });
+
+// --- AI Depth estimation ---
+async function runDepthEstimation(): Promise<void> {
+  if (!sourceBlob || !sourceRgba) return;
+  try {
+    lastRawDepth = await estimateDepth(sourceBlob, (msg) => {
+      showStatus(statusPill, msg, 0);
+    });
+    buildAndShow();
+  } catch (err) {
+    console.error('AI depth estimation failed:', err);
+    const isAuth = String(err).includes('Unauthorized') || String(err).includes('401');
+    showStatus(
+      statusPill,
+      isAuth ? 'Auth failed — check HuggingFace token below' : 'AI depth failed — using photo luminance',
+      isAuth ? 5000 : 3000,
+    );
+    useDepthAI = false;
+    lastRawDepth = null;
+    updateDepthAiButton();
+    buildAndShow();
+  }
+}
+
+function updateDepthAiButton(): void {
+  const btn = document.getElementById('depth-ai-btn') as HTMLButtonElement | null;
+  const note = document.getElementById('depth-ai-note') as HTMLElement | null;
+  if (!btn) return;
+  btn.textContent = useDepthAI ? 'Disable AI Depth' : 'Enable AI Depth';
+  btn.classList.toggle('active', useDepthAI);
+  if (note) note.style.display = useDepthAI ? 'block' : 'none';
+}
+
+function mountDepthAiButton(host: HTMLElement): void {
+  const section = document.createElement('div');
+  section.className = 'control-group';
+
+  const h = document.createElement('h3');
+  h.textContent = 'AI Depth';
+  section.appendChild(h);
+
+  const btn = document.createElement('button');
+  btn.id = 'depth-ai-btn';
+  btn.textContent = 'Enable AI Depth';
+  btn.title = 'Use Depth Anything to estimate real geometry instead of photo brightness';
+  btn.addEventListener('click', async () => {
+    if (!sourceRgba) {
+      showStatus(statusPill, 'Open a photo first', 1500);
+      return;
+    }
+    if (!localStorage.getItem('hf-token')) {
+      showStatus(statusPill, 'Save a HuggingFace token below first', 2500);
+      (document.getElementById('hf-token-input') as HTMLInputElement | null)?.focus();
+      return;
+    }
+    useDepthAI = !useDepthAI;
+    updateDepthAiButton();
+    if (useDepthAI) {
+      await runDepthEstimation();
+    } else {
+      lastRawDepth = null;
+      buildAndShow();
+    }
+  });
+  section.appendChild(btn);
+
+  // HuggingFace token row — required for model download since HF enforces auth
+  const tokenRow = document.createElement('div');
+  tokenRow.className = 'control-row';
+  tokenRow.style.marginTop = '8px';
+
+  const tokenLabel = document.createElement('label');
+  tokenLabel.htmlFor = 'hf-token-input';
+  tokenLabel.textContent = 'HF Token';
+  tokenLabel.title = 'Free HuggingFace access token — required to download the depth model';
+
+  const tokenInput = document.createElement('input');
+  tokenInput.type = 'password';
+  tokenInput.id = 'hf-token-input';
+  tokenInput.placeholder = 'hf_…';
+  tokenInput.value = localStorage.getItem('hf-token') || '';
+  tokenInput.style.cssText =
+    'flex:1;min-width:0;font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid var(--border);';
+
+  const tokenSave = document.createElement('button');
+  tokenSave.textContent = 'Save';
+  tokenSave.style.cssText = 'flex-shrink:0;padding:3px 8px;font-size:11px;';
+  tokenSave.addEventListener('click', () => {
+    const t = tokenInput.value.trim();
+    if (t) {
+      localStorage.setItem('hf-token', t);
+    } else {
+      localStorage.removeItem('hf-token');
+    }
+    setHfToken(t);
+    showStatus(statusPill, t ? 'Token saved' : 'Token cleared', 1500);
+  });
+
+  tokenRow.appendChild(tokenLabel);
+  tokenRow.appendChild(tokenInput);
+  tokenRow.appendChild(tokenSave);
+  section.appendChild(tokenRow);
+
+  // Depth blend slider
+  const blendRow = document.createElement('div');
+  blendRow.className = 'control-row';
+  blendRow.style.marginTop = '8px';
+
+  const blendLabel = document.createElement('label');
+  blendLabel.textContent = 'Depth mix';
+  blendLabel.title = '0 = photo detail only · 100 = AI depth only · 50 = blend (best for portraits)';
+
+  const blendSlider = document.createElement('input');
+  blendSlider.type = 'range';
+  blendSlider.min = '0';
+  blendSlider.max = '100';
+  blendSlider.value = String(Math.round(depthBlend * 100));
+
+  const blendVal = document.createElement('span');
+  blendVal.className = 'value';
+  blendVal.textContent = blendSlider.value + '%';
+
+  blendSlider.addEventListener('input', () => {
+    depthBlend = Number(blendSlider.value) / 100;
+    blendVal.textContent = blendSlider.value + '%';
+    if (useDepthAI && sourceRgba && lastMesh && lastRawDepth) hotZUpdate();
+  });
+
+  blendRow.appendChild(blendLabel);
+  blendRow.appendChild(blendSlider);
+  blendRow.appendChild(blendVal);
+  section.appendChild(blendRow);
+
+  const getTokenNote = document.createElement('p');
+  getTokenNote.className = 'depth-ai-note';
+  getTokenNote.innerHTML =
+    'Free token: <a href="https://huggingface.co/settings/tokens" target="_blank" ' +
+    'style="color:var(--accent)">huggingface.co/settings/tokens</a>';
+  section.appendChild(getTokenNote);
+
+  const note = document.createElement('p');
+  note.id = 'depth-ai-note';
+  note.className = 'depth-ai-note';
+  note.textContent = 'Tip: toggle "Invert" to swap near↔far. For portraits, raise Contrast to amplify subtle depth differences, or use normal (luminance) mode for finer facial detail.';
+  note.style.display = 'none';
+  section.appendChild(note);
+
+  host.appendChild(section);
+
+  // Apply any token already saved so it's ready before the first pipeline call
+  const saved = localStorage.getItem('hf-token');
+  if (saved) setHfToken(saved);
+}
