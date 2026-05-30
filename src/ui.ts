@@ -49,6 +49,7 @@ const GROUPS: Array<{ title: string; controls: ControlSpec[] }> = [
     controls: [
       { kind: 'range', key: 'baseExtendMm', label: 'Width', min: 0, max: 30, step: 0.5, format: v => `${v.toFixed(1)} mm` },
       { kind: 'range', key: 'baseHeightMm', label: 'Depth', min: 0, max: 10, step: 0.5, format: v => `${v.toFixed(1)} mm` },
+      { kind: 'range', key: 'baseTabWidthMm', label: 'Tab width', min: 0, max: 10, step: 0.5, format: v => v === 0 ? 'solid' : `${v.toFixed(1)} mm` },
     ],
   },
   {
@@ -142,7 +143,10 @@ export function mountControls(host: HTMLElement, store: ParamStore): void {
 export function showStatus(host: HTMLElement, text: string, hideAfterMs = 1500): void {
   host.textContent = text;
   host.classList.add('show');
+  host.classList.toggle('loading', hideAfterMs === 0);
   if (hideAfterMs > 0) {
-    window.setTimeout(() => host.classList.remove('show'), hideAfterMs);
+    window.setTimeout(() => {
+      host.classList.remove('show', 'loading');
+    }, hideAfterMs);
   }
 }

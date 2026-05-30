@@ -168,40 +168,33 @@ export function buildMesh(h, p) {
         }
     };
 }
-export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10) {
-    const x0 = panel.bbox.min[0];
-    const x1 = panel.bbox.max[0];
-    const yt = panel.bbox.max[1];
-    const yb = yt - baseHeightMm;
-    const zlo = -baseExtendMm;
-    const zhi = panel.bbox.max[2] + baseExtendMm;
-    const baseVerts = [
-        x0,
-        yb,
-        zlo,
-        x0,
-        yb,
-        zhi,
-        x1,
-        yb,
-        zlo,
-        x1,
-        yb,
-        zhi,
-        x0,
-        yt,
-        zlo,
-        x0,
-        yt,
-        zhi,
-        x1,
-        yt,
-        zlo,
-        x1,
-        yt,
-        zhi
-    ];
-    const baseTris = [
+function appendBox(pos, idx, vStart, iStart, xa, xb, ylo, yhi, zlo, zhi) {
+    const p = vStart * 3;
+    pos[p + 0] = xa;
+    pos[p + 1] = ylo;
+    pos[p + 2] = zlo;
+    pos[p + 3] = xa;
+    pos[p + 4] = ylo;
+    pos[p + 5] = zhi;
+    pos[p + 6] = xb;
+    pos[p + 7] = ylo;
+    pos[p + 8] = zlo;
+    pos[p + 9] = xb;
+    pos[p + 10] = ylo;
+    pos[p + 11] = zhi;
+    pos[p + 12] = xa;
+    pos[p + 13] = yhi;
+    pos[p + 14] = zlo;
+    pos[p + 15] = xa;
+    pos[p + 16] = yhi;
+    pos[p + 17] = zhi;
+    pos[p + 18] = xb;
+    pos[p + 19] = yhi;
+    pos[p + 20] = zlo;
+    pos[p + 21] = xb;
+    pos[p + 22] = yhi;
+    pos[p + 23] = zhi;
+    const tris = [
         4,
         5,
         6,
@@ -239,16 +232,50 @@ export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10) {
         7,
         3
     ];
-    const vOff = panel.vertexCount;
-    const iOff = panel.triangleCount * 3;
-    const newVC = panel.vertexCount + 8;
-    const newTC = panel.triangleCount + 12;
+    for(let i = 0; i < 36; i++)idx[iStart + i] = vStart + tris[i];
+}
+export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10, tabWidthMm = 0) {
+    const x0 = panel.bbox.min[0];
+    const x1 = panel.bbox.max[0];
+    const yt = panel.bbox.max[1];
+    const yb = yt - baseHeightMm;
+    const zlo = -baseExtendMm;
+    const zhi = panel.bbox.max[2] + baseExtendMm;
+    const useTabs = tabWidthMm > 0 && tabWidthMm * 3 < x1 - x0;
+    const boxCount = useTabs ? 3 : 1;
+    const newVC = panel.vertexCount + 8 * boxCount;
+    const newTC = panel.triangleCount + 12 * boxCount;
     const newPos = new Float32Array(newVC * 3);
     const newIdx = new Uint32Array(newTC * 3);
     newPos.set(panel.positions);
-    for(let i = 0; i < baseVerts.length; i++)newPos[vOff * 3 + i] = baseVerts[i];
     newIdx.set(panel.indices);
-    for(let i = 0; i < baseTris.length; i++)newIdx[iOff + i] = vOff + baseTris[i];
+    if (!useTabs) {
+        appendBox(newPos, newIdx, panel.vertexCount, panel.triangleCount * 3, x0, x1, yb, yt, zlo, zhi);
+    } else {
+        const cx = (x0 + x1) / 2;
+        const hw = tabWidthMm / 2;
+        const tabs = [
+            [
+                x0,
+                x0 + tabWidthMm
+            ],
+            [
+                cx - hw,
+                cx + hw
+            ],
+            [
+                x1 - tabWidthMm,
+                x1
+            ]
+        ];
+        let vOff = panel.vertexCount;
+        let iOff = panel.triangleCount * 3;
+        for (const [xa, xb] of tabs){
+            appendBox(newPos, newIdx, vOff, iOff, xa, xb, yb, yt, zlo, zhi);
+            vOff += 8;
+            iOff += 36;
+        }
+    }
     return {
         positions: newPos,
         indices: newIdx,

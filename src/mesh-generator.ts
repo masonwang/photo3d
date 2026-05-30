@@ -290,67 +290,89 @@ export function buildMesh(h: Heightmap, p: MeshParams): Mesh {
   };
 }
 
+// Write one watertight box (8 verts, 12 tris) into pre-allocated arrays.
+// Vertex layout matches the original base box convention (ylo < yhi).
+function appendBox(
+  pos: Float32Array, idx: Uint32Array,
+  vStart: number, iStart: number,
+  xa: number, xb: number,
+  ylo: number, yhi: number,
+  zlo: number, zhi: number,
+): void {
+  const p = vStart * 3;
+  pos[p+ 0]=xa; pos[p+ 1]=ylo; pos[p+ 2]=zlo;
+  pos[p+ 3]=xa; pos[p+ 4]=ylo; pos[p+ 5]=zhi;
+  pos[p+ 6]=xb; pos[p+ 7]=ylo; pos[p+ 8]=zlo;
+  pos[p+ 9]=xb; pos[p+10]=ylo; pos[p+11]=zhi;
+  pos[p+12]=xa; pos[p+13]=yhi; pos[p+14]=zlo;
+  pos[p+15]=xa; pos[p+16]=yhi; pos[p+17]=zhi;
+  pos[p+18]=xb; pos[p+19]=yhi; pos[p+20]=zlo;
+  pos[p+21]=xb; pos[p+22]=yhi; pos[p+23]=zhi;
+  const tris = [
+    4,5,6, 6,5,7,  // +Y face (yhi)
+    0,2,1, 2,3,1,  // -Y face (ylo)
+    0,4,2, 2,4,6,  // -Z face (zlo)
+    1,3,5, 3,7,5,  // +Z face (zhi)
+    0,1,4, 1,5,4,  // -X face (xa)
+    2,6,3, 6,7,3,  // +X face (xb)
+  ];
+  for (let i = 0; i < 36; i++) idx[iStart + i] = vStart + tris[i];
+}
+
 /**
- * Append a rectangular stand base to an existing panel mesh so the print
- * can stand upright without tipping.
+ * Append a stand base to an existing panel mesh so the print can stand
+ * upright without tipping.
  *
- * The base is a watertight box in mesh space that:
- *   - spans the full panel width (X)
- *   - sits at the bottom edge of the panel (high-Y in mesh = low-Z in STL)
- *   - extends baseExtendMm beyond the panel on both sides in Z (= STL Y depth)
+ * tabWidthMm = 0  → solid full-width box (default).
+ * tabWidthMm > 0  → three narrow breakaway tabs (left / centre / right),
+ *                   each tabWidthMm wide in X, same height and depth as the
+ *                   solid base. Falls back to solid if the panel is too narrow
+ *                   to fit three tabs with any gap between them.
  *
- * Because it appends vertices after the front-grid block, updateFrontZ is
- * unaffected — it only touches positions[0 .. W*H*3).
+ * Appends vertices after the front-grid block so updateFrontZ is unaffected.
  */
 export function addBaseMesh(
   panel: Mesh,
   baseHeightMm = 3,
   baseExtendMm = 10,
+  tabWidthMm = 0,
 ): Mesh {
   const x0 = panel.bbox.min[0];
   const x1 = panel.bbox.max[0];
-  const yt = panel.bbox.max[1];              // bottom of panel in mesh space
-  const yb = yt - baseHeightMm;             // top of base in mesh space
-  const zlo = -baseExtendMm;                // behind the back face
-  const zhi = panel.bbox.max[2] + baseExtendMm; // in front of the peak
+  const yt = panel.bbox.max[1];
+  const yb = yt - baseHeightMm;
+  const zlo = -baseExtendMm;
+  const zhi = panel.bbox.max[2] + baseExtendMm;
 
-  // 8 vertices of the base box, numbered 0-7:
-  //   0:(x0,yb,zlo) 1:(x0,yb,zhi) 2:(x1,yb,zlo) 3:(x1,yb,zhi)
-  //   4:(x0,yt,zlo) 5:(x0,yt,zhi) 6:(x1,yt,zlo) 7:(x1,yt,zhi)
-  const baseVerts = [
-    x0,yb,zlo,  x0,yb,zhi,  x1,yb,zlo,  x1,yb,zhi,
-    x0,yt,zlo,  x0,yt,zhi,  x1,yt,zlo,  x1,yt,zhi,
-  ];
+  const useTabs = tabWidthMm > 0 && tabWidthMm * 3 < (x1 - x0);
 
-  // 12 triangles with CCW winding (outward normals) in mesh space.
-  // Normals after the STL vertical-orientation transform (x,y,z)->(x,z,maxY-y):
-  //   +Y mesh face → -Z STL (build plate side)
-  //   -Y mesh face → +Z STL (top of base)
-  //   -Z mesh face → -Y STL (back of base)
-  //   +Z mesh face → +Y STL (front of base)
-  //   ±X mesh face → ±X STL (left/right)
-  const baseTris = [
-    4,5,6,  6,5,7,   // +Y face (yt, STL bottom)
-    0,2,1,  2,3,1,   // -Y face (yb, STL top)
-    0,4,2,  2,4,6,   // -Z face (zlo, STL back)
-    1,3,5,  3,7,5,   // +Z face (zhi, STL front)
-    0,1,4,  1,5,4,   // -X face (x0, STL left)
-    2,6,3,  6,7,3,   // +X face (x1, STL right)
-  ];
-
-  const vOff = panel.vertexCount;
-  const iOff = panel.triangleCount * 3;
-
-  const newVC = panel.vertexCount + 8;
-  const newTC = panel.triangleCount + 12;
+  const boxCount = useTabs ? 3 : 1;
+  const newVC = panel.vertexCount + 8 * boxCount;
+  const newTC = panel.triangleCount + 12 * boxCount;
   const newPos = new Float32Array(newVC * 3);
   const newIdx = new Uint32Array(newTC * 3);
-
   newPos.set(panel.positions);
-  for (let i = 0; i < baseVerts.length; i++) newPos[vOff * 3 + i] = baseVerts[i];
-
   newIdx.set(panel.indices);
-  for (let i = 0; i < baseTris.length; i++) newIdx[iOff + i] = vOff + baseTris[i];
+
+  if (!useTabs) {
+    appendBox(newPos, newIdx, panel.vertexCount, panel.triangleCount * 3,
+      x0, x1, yb, yt, zlo, zhi);
+  } else {
+    const cx = (x0 + x1) / 2;
+    const hw = tabWidthMm / 2;
+    const tabs: Array<[number, number]> = [
+      [x0,        x0 + tabWidthMm],
+      [cx - hw,   cx + hw        ],
+      [x1 - tabWidthMm, x1       ],
+    ];
+    let vOff = panel.vertexCount;
+    let iOff = panel.triangleCount * 3;
+    for (const [xa, xb] of tabs) {
+      appendBox(newPos, newIdx, vOff, iOff, xa, xb, yb, yt, zlo, zhi);
+      vOff += 8;
+      iOff += 36;
+    }
+  }
 
   return {
     positions: newPos,

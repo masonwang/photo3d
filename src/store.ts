@@ -25,6 +25,7 @@ export type Params = {
   // Base
   baseExtendMm: number;  // how far the foot extends beyond the panel on each side
   baseHeightMm: number;  // height of the base foot from the build plate
+  baseTabWidthMm: number; // 0 = solid base; >0 = three breakaway tabs of this width
   // Output
   asciiStl: boolean;
 };
@@ -34,7 +35,7 @@ export const defaultParams: Params = {
   minThicknessMm: 0.5,
   maxThicknessMm: 2.0,
   pixelsPerMm: 10,
-  mirror: true,
+  mirror: false,
   invert: true,
   gamma: 1.0,
   brightness: 0,
@@ -42,7 +43,8 @@ export const defaultParams: Params = {
   smoothingPx: 1,
   borderMm: 2,
   baseExtendMm: 5,
-  baseHeightMm: 1,
+  baseHeightMm: 0.5,
+  baseTabWidthMm: 0.5,
   asciiStl: false,
 };
 
@@ -64,6 +66,7 @@ export const COLD_KEYS = new Set<keyof Params>([
   'borderMm',
   'baseExtendMm',
   'baseHeightMm',
+  'baseTabWidthMm',
 ]);
 
 // Free keys: no recompute — handled as a scene-graph transform.

@@ -5,11 +5,13 @@ import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer.js';
 import { Preview } from './preview.js';
 import { mountControls, showStatus } from './ui.js';
 import { estimateDepth } from './depth-estimator.js';
+import { showCropModal } from './crop.js';
 const store = new ParamStore();
 const controlsHost = document.getElementById('controls');
 const previewHost = document.getElementById('preview-canvas');
 const emptyMsg = document.getElementById('preview-empty');
 const fileInput = document.getElementById('file-input');
+const cropBtn = document.getElementById('crop-btn');
 const downloadBtn = document.getElementById('download-btn');
 const statusPill = document.getElementById('status-pill');
 const dimsEl = document.getElementById('preview-dims');
@@ -18,6 +20,8 @@ const modeButtons = document.querySelectorAll('#render-modes button');
 const resetBtn = document.getElementById('reset-view');
 let sourceRgba = null;
 let sourceBlob = null;
+let originalRgba = null;
+let originalBlob = null;
 let lastLum = null;
 let lastMesh = null;
 let lastRawDepth = null;
@@ -82,7 +86,7 @@ function buildAndShow() {
         maxThicknessMm: p.maxThicknessMm,
         borderMm: p.borderMm
     });
-    const mesh = addBaseMesh(panel, p.baseHeightMm, p.baseExtendMm);
+    const mesh = addBaseMesh(panel, p.baseHeightMm, p.baseExtendMm, p.baseTabWidthMm);
     lastMesh = mesh;
     preview.setMesh(mesh);
     emptyMsg.style.display = 'none';
@@ -124,24 +128,48 @@ store.subscribe(FREE_KEYS, ()=>{
     if (!sourceRgba) return;
     scheduleColdRebuild();
 });
+async function proceedWithSource() {
+    if (!sourceRgba) return;
+    showStatus(statusPill, 'Building…', 0);
+    await new Promise((r)=>setTimeout(r, 0));
+    if (useDepthAI) {
+        await runDepthEstimation();
+    } else {
+        buildAndShow();
+    }
+    showStatus(statusPill, `Loaded ${sourceRgba.width}×${sourceRgba.height}`, 1500);
+}
+function openCropModal() {
+    if (!originalRgba || !originalBlob) return;
+    showCropModal(originalRgba, async (result)=>{
+        sourceBlob = result.blob;
+        sourceRgba = result.rgba;
+        lastRawDepth = null;
+        await proceedWithSource();
+    }, async ()=>{
+        sourceBlob = originalBlob;
+        sourceRgba = originalRgba;
+        lastRawDepth = null;
+        await proceedWithSource();
+    });
+}
 fileInput.addEventListener('change', async ()=>{
     const f = fileInput.files?.[0];
     if (!f) return;
     showStatus(statusPill, 'Decoding image…', 0);
     try {
-        sourceBlob = f;
-        sourceRgba = await decodeImageToRgba(f);
-        if (useDepthAI) {
-            await runDepthEstimation();
-        } else {
-            buildAndShow();
-        }
-        showStatus(statusPill, `Loaded ${sourceRgba.width}×${sourceRgba.height}`, 1500);
+        const rgba = await decodeImageToRgba(f);
+        originalRgba = rgba;
+        originalBlob = f;
+        cropBtn.disabled = false;
+        showStatus(statusPill, '', 1);
+        openCropModal();
     } catch (err) {
         console.error(err);
         showStatus(statusPill, 'Failed to load image', 2000);
     }
 });
+cropBtn.addEventListener('click', openCropModal);
 downloadBtn.addEventListener('click', ()=>{
     if (!sourceRgba) return;
     buildAndShow();

@@ -126,6 +126,15 @@ const GROUPS = [
                 max: 10,
                 step: 0.5,
                 format: (v)=>`${v.toFixed(1)} mm`
+            },
+            {
+                kind: 'range',
+                key: 'baseTabWidthMm',
+                label: 'Tab width',
+                min: 0,
+                max: 10,
+                step: 0.5,
+                format: (v)=>v === 0 ? 'solid' : `${v.toFixed(1)} mm`
             }
         ]
     },
@@ -216,7 +225,10 @@ export function mountControls(host, store) {
 export function showStatus(host, text, hideAfterMs = 1500) {
     host.textContent = text;
     host.classList.add('show');
+    host.classList.toggle('loading', hideAfterMs === 0);
     if (hideAfterMs > 0) {
-        window.setTimeout(()=>host.classList.remove('show'), hideAfterMs);
+        window.setTimeout(()=>{
+            host.classList.remove('show', 'loading');
+        }, hideAfterMs);
     }
 }
