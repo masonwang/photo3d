@@ -74,8 +74,49 @@ export function applyImageParams(src, W, H, p) {
         data: out
     };
 }
+function isHeic(blob) {
+    if (blob.type === 'image/heic' || blob.type === 'image/heif') return true;
+    const name = (blob.name ?? '').toLowerCase();
+    return name.endsWith('.heic') || name.endsWith('.heif');
+}
+async function bitmapForHeic(blob) {
+    try {
+        return await createImageBitmap(blob);
+    } catch  {}
+    const ImageDecoder = window.ImageDecoder;
+    if (typeof ImageDecoder !== 'undefined') {
+        try {
+            const type = blob.type || 'image/heic';
+            if (await ImageDecoder.isTypeSupported(type)) {
+                const dec = new ImageDecoder({
+                    data: blob.stream(),
+                    type
+                });
+                const { image } = await dec.decode();
+                const bmp = await createImageBitmap(image);
+                image.close?.();
+                dec.close();
+                return bmp;
+            }
+        } catch  {}
+    }
+    const url = URL.createObjectURL(blob);
+    try {
+        const img = new Image();
+        await new Promise((res, rej)=>{
+            img.onload = ()=>res();
+            img.onerror = rej;
+            img.src = url;
+        });
+        return await createImageBitmap(img);
+    } catch  {
+        throw new Error('HEIC not supported in this browser. Try Safari.');
+    } finally{
+        URL.revokeObjectURL(url);
+    }
+}
 export async function decodeImageToRgba(source) {
-    const bmp = await createImageBitmap(source);
+    const bmp = await (isHeic(source) ? bitmapForHeic(source) : createImageBitmap(source));
     const canvas = document.createElement('canvas');
     canvas.width = bmp.width;
     canvas.height = bmp.height;

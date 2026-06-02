@@ -222,13 +222,14 @@ export function mountControls(host, store) {
     resetWrap.appendChild(btn);
     host.appendChild(resetWrap);
 }
-export function showStatus(host, text, hideAfterMs = 1500) {
+export function showStatus(host, text, hideAfterMs = 1500, type = 'info') {
     host.textContent = text;
     host.classList.add('show');
-    host.classList.toggle('loading', hideAfterMs === 0);
+    host.classList.toggle('loading', hideAfterMs === 0 && type === 'info');
+    host.classList.toggle('error', type === 'error');
     if (hideAfterMs > 0) {
         window.setTimeout(()=>{
-            host.classList.remove('show', 'loading');
+            host.classList.remove('show', 'loading', 'error');
         }, hideAfterMs);
     }
 }

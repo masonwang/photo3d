@@ -137,7 +137,7 @@ html, body {
   height: 100%;
   overflow: hidden;
 }
-.preview-canvas canvas { display: block; width: 100%; height: 100%; }
+.preview-canvas canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
 .preview-empty {
   position: absolute;
@@ -200,6 +200,22 @@ html, body {
   z-index: 2;
 }
 .status-pill.show { opacity: 1; }
+
+/* Centered error state */
+.status-pill.error {
+  bottom: 50%;
+  left: 50%;
+  transform: translate(-50%, 50%);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 20px;
+  border-radius: 24px;
+  background: rgba(180, 30, 30, 0.92);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  max-width: 60%;
+  text-align: center;
+  white-space: normal;
+}
 
 /* Prominent centered state for long-running operations */
 .status-pill.loading {
@@ -347,6 +363,12 @@ html, body {
   cursor: pointer;
 }
 .crop-skip-btn:hover { background: var(--bg-2); }
+
+.crop-footer-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
 
 @media (max-width: 700px) {
   .app-main {

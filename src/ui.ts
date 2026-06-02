@@ -140,13 +140,14 @@ export function mountControls(host: HTMLElement, store: ParamStore): void {
   host.appendChild(resetWrap);
 }
 
-export function showStatus(host: HTMLElement, text: string, hideAfterMs = 1500): void {
+export function showStatus(host: HTMLElement, text: string, hideAfterMs = 1500, type: 'info' | 'error' = 'info'): void {
   host.textContent = text;
   host.classList.add('show');
-  host.classList.toggle('loading', hideAfterMs === 0);
+  host.classList.toggle('loading', hideAfterMs === 0 && type === 'info');
+  host.classList.toggle('error', type === 'error');
   if (hideAfterMs > 0) {
     window.setTimeout(() => {
-      host.classList.remove('show', 'loading');
+      host.classList.remove('show', 'loading', 'error');
     }, hideAfterMs);
   }
 }

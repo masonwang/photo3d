@@ -155,6 +155,7 @@ function openCropModal() {
 }
 fileInput.addEventListener('change', async ()=>{
     const f = fileInput.files?.[0];
+    fileInput.value = '';
     if (!f) return;
     showStatus(statusPill, 'Decoding image…', 0);
     try {
@@ -166,7 +167,7 @@ fileInput.addEventListener('change', async ()=>{
         openCropModal();
     } catch (err) {
         console.error(err);
-        showStatus(statusPill, 'Failed to load image', 2000);
+        showStatus(statusPill, err instanceof Error ? err.message : 'Failed to load image', 3000, 'error');
     }
 });
 cropBtn.addEventListener('click', openCropModal);

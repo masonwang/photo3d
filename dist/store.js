@@ -12,7 +12,7 @@ export const defaultParams = {
     borderMm: 2,
     baseExtendMm: 5,
     baseHeightMm: 0.5,
-    baseTabWidthMm: 0.5,
+    baseTabWidthMm: 1,
     asciiStl: false
 };
 export const HOT_KEYS = new Set([

@@ -13,6 +13,7 @@ export function showCropModal(
   sourceRgba: Rgba,
   onConfirm: (result: CropResult) => void,
   onSkip: () => void,
+  onCancel: () => void = () => {},
 ): void {
   const overlay = document.createElement('div');
   overlay.className = 'crop-overlay';
@@ -36,6 +37,10 @@ export function showCropModal(
   const footer = document.createElement('div');
   footer.className = 'crop-footer';
 
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.className = 'crop-skip-btn';
+
   const skipBtn = document.createElement('button');
   skipBtn.textContent = 'Use Full Image';
   skipBtn.className = 'crop-skip-btn';
@@ -45,8 +50,13 @@ export function showCropModal(
   applyBtn.className = 'primary-btn';
   applyBtn.disabled = true;
 
-  footer.appendChild(skipBtn);
-  footer.appendChild(applyBtn);
+  const rightBtns = document.createElement('div');
+  rightBtns.className = 'crop-footer-right';
+  rightBtns.appendChild(skipBtn);
+  rightBtns.appendChild(applyBtn);
+
+  footer.appendChild(cancelBtn);
+  footer.appendChild(rightBtns);
   modal.appendChild(header);
   modal.appendChild(canvas);
   modal.appendChild(footer);
@@ -143,48 +153,64 @@ export function showCropModal(
     ctx.stroke();
   }
 
-  function canvasPos(e: MouseEvent): { x: number; y: number } {
+  function canvasPos(clientX: number, clientY: number): { x: number; y: number } {
     const r = canvas.getBoundingClientRect();
     return {
-      x: Math.max(0, Math.min(canvasW, e.clientX - r.left)),
-      y: Math.max(0, Math.min(canvasH, e.clientY - r.top)),
+      x: Math.max(0, Math.min(canvasW, clientX - r.left)),
+      y: Math.max(0, Math.min(canvasH, clientY - r.top)),
     };
   }
 
-  canvas.addEventListener('mousedown', (e) => {
-    const p = canvasPos(e);
+  function startDrag(clientX: number, clientY: number): void {
+    const p = canvasPos(clientX, clientY);
     startX = p.x; startY = p.y;
     cropRect = { x: startX, y: startY, w: 0, h: 0 };
     dragging = true;
     applyBtn.disabled = true;
-    e.preventDefault();
-  });
+  }
 
-  const onMouseMove = (e: MouseEvent) => {
+  function moveDrag(clientX: number, clientY: number): void {
     if (!dragging) return;
-    const p = canvasPos(e);
+    const p = canvasPos(clientX, clientY);
     cropRect = { x: startX, y: startY, w: p.x - startX, h: p.y - startY };
     draw();
-  };
+  }
 
-  const onMouseUp = () => {
+  function endDrag(): void {
     if (!dragging) return;
     dragging = false;
     if (cropRect && Math.abs(cropRect.w) > 5 && Math.abs(cropRect.h) > 5) {
       applyBtn.disabled = false;
     }
     draw();
-  };
+  }
+
+  canvas.addEventListener('mousedown', (e) => { startDrag(e.clientX, e.clientY); e.preventDefault(); });
+  const onMouseMove = (e: MouseEvent) => moveDrag(e.clientX, e.clientY);
+  const onMouseUp = () => endDrag();
+
+  canvas.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    startDrag(t.clientX, t.clientY);
+    e.preventDefault();
+  }, { passive: false });
+  const onTouchMove = (e: TouchEvent) => { moveDrag(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); };
+  const onTouchEnd = () => endDrag();
 
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('touchmove', onTouchMove, { passive: false });
+  window.addEventListener('touchend', onTouchEnd);
 
   function cleanup(): void {
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
+    window.removeEventListener('touchmove', onTouchMove);
+    window.removeEventListener('touchend', onTouchEnd);
     overlay.remove();
   }
 
+  cancelBtn.addEventListener('click', () => { cleanup(); onCancel(); });
   skipBtn.addEventListener('click', () => { cleanup(); onSkip(); });
 
   applyBtn.addEventListener('click', async () => {

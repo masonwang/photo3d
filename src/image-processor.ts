@@ -119,9 +119,50 @@ export type Luminance = {
   data: Float32Array; // 0..1
 };
 
-/** Decode a File/Blob/HTMLImageElement to RGBA pixels via an offscreen canvas. */
+function isHeic(blob: Blob): boolean {
+  if (blob.type === 'image/heic' || blob.type === 'image/heif') return true;
+  const name = ((blob as File).name ?? '').toLowerCase();
+  return name.endsWith('.heic') || name.endsWith('.heif');
+}
+
+// Try three paths in order — each covers a different browser/version.
+async function bitmapForHeic(blob: Blob): Promise<ImageBitmap> {
+  // 1. Safari: createImageBitmap handles HEIC natively.
+  try { return await createImageBitmap(blob); } catch { /* continue */ }
+
+  // 2. Chrome 94+ on macOS: ImageDecoder with explicit MIME type routes through the
+  //    platform codec, which supports HEIC even when createImageBitmap doesn't.
+  const ImageDecoder = (window as any).ImageDecoder;
+  if (typeof ImageDecoder !== 'undefined') {
+    try {
+      const type = blob.type || 'image/heic';
+      if (await ImageDecoder.isTypeSupported(type)) {
+        const dec = new ImageDecoder({ data: blob.stream(), type });
+        const { image } = await dec.decode();
+        const bmp = await createImageBitmap(image as ImageBitmap);
+        (image as any).close?.();
+        dec.close();
+        return bmp;
+      }
+    } catch { /* continue */ }
+  }
+
+  // 3. <img> element fallback (Chrome 105+ serves HEIC via object URL on macOS).
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = url; });
+    return await createImageBitmap(img);
+  } catch {
+    throw new Error('HEIC not supported in this browser. Try Safari.');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Decode a File/Blob to RGBA pixels via an offscreen canvas. */
 export async function decodeImageToRgba(source: Blob): Promise<Rgba> {
-  const bmp = await createImageBitmap(source);
+  const bmp = await (isHeic(source) ? bitmapForHeic(source) : createImageBitmap(source));
   const canvas = document.createElement('canvas');
   canvas.width = bmp.width;
   canvas.height = bmp.height;
