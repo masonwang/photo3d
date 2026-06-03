@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="5" fill="#c96442"/>
+  <!-- Panel frame -->
+  <rect x="4" y="5" width="24" height="19" rx="2.5" fill="none" stroke="#f1d3a8" stroke-width="2"/>
+  <!-- Relief depth bands (simulate lithophane gradient) -->
+  <rect x="6" y="7"  width="20" height="3" rx="1" fill="#f1d3a8" opacity="0.85"/>
+  <rect x="6" y="11" width="20" height="3" rx="1" fill="#f1d3a8" opacity="0.45"/>
+  <rect x="6" y="15" width="20" height="3" rx="1" fill="#f1d3a8" opacity="0.70"/>
+  <rect x="6" y="19" width="20" height="3" rx="1" fill="#f1d3a8" opacity="0.30"/>
+  <!-- Base stand stub -->
+  <rect x="12" y="24" width="8" height="3" rx="1" fill="#f1d3a8" opacity="0.6"/>
+</svg>

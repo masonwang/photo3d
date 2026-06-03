@@ -91,6 +91,16 @@ function build() {
   writeFileSync(join(DIST, 'style.css'), readFileSync(join(SRC, 'style.css'), 'utf8'));
   console.log('  src/style.css -> dist/style.css');
 
+  // Copy static SEO / PWA files
+  const STATIC = ['robots.txt', 'sitemap.xml', 'manifest.webmanifest', 'favicon.svg', 'CNAME'];
+  for (const f of STATIC) {
+    const src = resolve(__dirname, f);
+    if (existsSync(src)) {
+      writeFileSync(join(DIST, f), readFileSync(src));
+      console.log(`  ${f} -> dist/${f}`);
+    }
+  }
+
   // index.html: rewrite asset paths to the built files and inject the import map.
   let html = readFileSync(resolve(__dirname, 'index.html'), 'utf8');
   html = html

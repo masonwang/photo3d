@@ -3,7 +3,77 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Photo → Lithophane</title>
+
+    <!-- Primary SEO -->
+    <title>Photo to Lithophane Converter | Free Online 3D Print Tool</title>
+    <meta name="description" content="Convert any photo into a print-ready 3D lithophane STL file in seconds. Adjust depth, brightness, borders, and base style. Runs entirely in your browser — no uploads, no account needed." />
+    <meta name="keywords" content="lithophane generator, photo to lithophane, 3d print lithophane, STL converter, lithophane maker online, free lithophane tool, 3d printing photo" />
+    <meta name="robots" content="index, follow" />
+    <meta name="author" content="Photo to Lithophane" />
+    <link rel="canonical" href="https://mdxus.com/" />
+
+    <!-- Open Graph (social sharing) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Photo to Lithophane Converter — Free 3D Print Tool" />
+    <meta property="og:description" content="Turn any photo into a ready-to-print 3D lithophane STL in your browser. No uploads, no account, completely free." />
+    <meta property="og:url" content="https://mdxus.com/" />
+    <meta property="og:site_name" content="Photo to Lithophane" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Photo to Lithophane Converter — Free 3D Print Tool" />
+    <meta name="twitter:description" content="Turn any photo into a ready-to-print 3D lithophane STL in your browser. No uploads, no account, completely free." />
+
+    <!-- Mobile / PWA -->
+    <meta name="theme-color" content="#c96442" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Lithophane" />
+
+    <!-- Google Search Console site verification (replace with your actual token) -->
+    <!-- <meta name="google-site-verification" content="REPLACE_WITH_YOUR_VERIFICATION_TOKEN" /> -->
+
+    <!-- Favicon & manifest -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+
+    <!-- Preconnect to CDN origins used at runtime — shaves ~100–200 ms off first load -->
+    <link rel="preconnect" href="https://unpkg.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="dns-prefetch" href="https://huggingface.co" />
+
+    <!-- Google Analytics 4 — replace GA_MEASUREMENT_ID with your actual ID (e.g. G-XXXXXXXXXX).
+         Get one free at https://analytics.google.com → Admin → Create Property. -->
+    <!-- <script async src="https://www.googletagmanager.com/gtag/js?id=GA_MEASUREMENT_ID"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'GA_MEASUREMENT_ID');
+    </script> -->
+
+    <!-- Structured data: WebApplication schema for rich search results -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Photo to Lithophane Converter",
+      "url": "https://mdxus.com/",
+      "description": "Convert any photo into a print-ready 3D lithophane STL file. Adjust depth, brightness, borders, and base style. Runs entirely in your browser — no file uploads, no account required.",
+      "applicationCategory": "DesignApplication",
+      "operatingSystem": "Any modern web browser",
+      "browserRequirements": "Requires JavaScript. WebGPU optional for AI depth estimation.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": "Photo to lithophane conversion, AI-powered depth estimation (Depth Anything v2), Binary STL export, Interactive 3D preview, Multiple base styles"
+    }
+    </script>
+
     <link rel="stylesheet" href="./style.css" />
     <script type="importmap">
     {
@@ -23,8 +93,8 @@
         <div class="header-actions">
           <label class="file-btn" for="file-input">Open photo</label>
           <input id="file-input" type="file" accept="image/*,.heic,.heif" hidden />
-          <button id="crop-btn" disabled>Redo crop</button>
-          <button id="download-btn" class="primary-btn" disabled>Download STL</button>
+          <button type="button" id="crop-btn" disabled>Redo crop</button>
+          <button type="button" id="download-btn" class="primary-btn" disabled>Download STL</button>
         </div>
       </header>
 
@@ -39,17 +109,17 @@
             </div>
             <div class="preview-toolbar">
               <div class="btn-group" id="view-presets">
-                <button data-preset="front">Front</button>
-                <button data-preset="back">Back</button>
-                <button data-preset="top">Top</button>
-                <button data-preset="three-quarter" class="active">3/4</button>
+                <button type="button" data-preset="front">Front</button>
+                <button type="button" data-preset="back">Back</button>
+                <button type="button" data-preset="top">Top</button>
+                <button type="button" data-preset="three-quarter" class="active">3/4</button>
               </div>
               <div class="btn-group" id="render-modes">
-                <button data-mode="lit" class="active">Lit</button>
-                <button data-mode="backlit">Backlit</button>
-                <button data-mode="wireframe">Wire</button>
+                <button type="button" data-mode="lit" class="active">Lit</button>
+                <button type="button" data-mode="backlit">Backlit</button>
+                <button type="button" data-mode="wireframe">Wire</button>
               </div>
-              <button id="reset-view" class="ghost-btn" title="Reset view">↺</button>
+              <button type="button" id="reset-view" class="ghost-btn" title="Reset view">↺</button>
             </div>
             <div id="status-pill" class="status-pill"></div>
             <div id="preview-dims" class="preview-dims"></div>
