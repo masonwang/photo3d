@@ -92,7 +92,7 @@ function build() {
   console.log('  src/style.css -> dist/style.css');
 
   // Copy static SEO / PWA files
-  const STATIC = ['robots.txt', 'sitemap.xml', 'manifest.webmanifest', 'favicon.svg', 'CNAME'];
+  const STATIC = ['robots.txt', 'sitemap.xml', 'manifest.webmanifest', 'favicon.svg', 'CNAME', '404.html'];
   for (const f of STATIC) {
     const src = resolve(__dirname, f);
     if (existsSync(src)) {
@@ -110,7 +110,8 @@ function build() {
     `    <script type="importmap">\n` +
     `${JSON.stringify(IMPORT_MAP, null, 2).split('\n').map(l => '    ' + l).join('\n')}\n` +
     `    </script>\n`;
-  html = html.replace('  </head>', mapTag + '  </head>');
+  const preloadTag = `    <link rel="modulepreload" href="./main.js" />\n`;
+  html = html.replace('  </head>', mapTag + preloadTag + '  </head>');
   writeFileSync(join(DIST, 'index.html'), html);
   console.log('  index.html -> dist/index.html (+ import map)');
 
