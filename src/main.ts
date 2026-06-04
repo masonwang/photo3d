@@ -35,6 +35,11 @@ const dimsEl = document.getElementById('preview-dims') as HTMLElement;
 const presetButtons = document.querySelectorAll<HTMLButtonElement>('#view-presets button');
 const modeButtons = document.querySelectorAll<HTMLButtonElement>('#render-modes button');
 const resetBtn = document.getElementById('reset-view') as HTMLButtonElement;
+const backlitControls = document.getElementById('backlit-controls') as HTMLElement;
+const blContrast = document.getElementById('bl-contrast') as HTMLInputElement;
+const blBrightness = document.getElementById('bl-brightness') as HTMLInputElement;
+const blContrastVal = document.getElementById('bl-contrast-val') as HTMLElement;
+const blBrightnessVal = document.getElementById('bl-brightness-val') as HTMLElement;
 
 let sourceRgba: Rgba | null = null;
 let sourceBlob: Blob | null = null;  // original file for AI inference
@@ -254,12 +259,24 @@ presetButtons.forEach(btn => {
 });
 
 // --- Render-mode buttons ---
+function setRenderMode(mode: RenderMode) {
+  preview.setMode(mode);
+  backlitControls.classList.toggle('visible', mode === 'backlit');
+  modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+}
+
 modeButtons.forEach(btn => {
-  btn.addEventListener('click', () => {
-    modeButtons.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    preview.setMode(btn.dataset.mode as RenderMode);
-  });
+  btn.addEventListener('click', () => setRenderMode(btn.dataset.mode as RenderMode));
+});
+
+// --- Backlit parameter sliders ---
+blContrast.addEventListener('input', () => {
+  blContrastVal.textContent = Number(blContrast.value).toFixed(1);
+  preview.setBacklitContrast(Number(blContrast.value));
+});
+blBrightness.addEventListener('input', () => {
+  blBrightnessVal.textContent = Number(blBrightness.value).toFixed(2);
+  preview.setBacklitBrightness(Number(blBrightness.value));
 });
 
 // --- Reset view ---
@@ -273,9 +290,9 @@ window.addEventListener('keydown', (e) => {
     case 'b': preview.applyPreset('back'); break;
     case 't': preview.applyPreset('top'); break;
     case 'r': preview.resetView(); break;
-    case 'l': preview.setMode('lit'); break;
-    case 'k': preview.setMode('backlit'); break;
-    case 'w': preview.setMode('wireframe'); break;
+    case 'l': setRenderMode('lit'); break;
+    case 'k': setRenderMode('backlit'); break;
+    case 'w': setRenderMode('wireframe'); break;
   }
 });
 

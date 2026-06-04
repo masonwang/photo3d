@@ -185,6 +185,43 @@ html, body {
   color: white;
 }
 
+.backlit-controls {
+  display: none;
+  position: absolute;
+  top: 50px;
+  right: 12px;
+  background: rgba(12, 10, 8, 0.82);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 8px 12px;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 2;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.backlit-controls.visible { display: flex; }
+.backlit-controls label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+  white-space: nowrap;
+}
+.backlit-controls input[type=range] {
+  width: 100px;
+  accent-color: #f0c060;
+  cursor: pointer;
+}
+.backlit-controls span {
+  min-width: 2.8em;
+  text-align: right;
+  color: #f0c060;
+  font-variant-numeric: tabular-nums;
+}
+
 .status-pill {
   position: absolute;
   bottom: 12px;

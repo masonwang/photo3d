@@ -3,7 +3,8 @@
  *
  * Renders on demand: only redraws when something changes (orbit, parameter,
  * preset). Two materials kept around: opaque "lit" for inspecting geometry,
- * and "physical" with transmission for "backlit" lithophane simulation.
+ * and a ShaderMaterial for "backlit" lithophane simulation that reads each
+ * vertex's Z coordinate directly and maps it to brightness.
  */
 
 import * as THREE from 'three';
@@ -14,13 +15,45 @@ import type { Mesh as MyMesh } from './mesh-generator';
 export type RenderMode = 'lit' | 'backlit' | 'wireframe';
 export type ViewPreset = 'front' | 'back' | 'top' | 'three-quarter';
 
+const BACKLIT_VERT = /* glsl */`
+  varying float vZ;
+  void main() {
+    vZ = position.z;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const BACKLIT_FRAG = /* glsl */`
+  varying float vZ;
+  uniform float uZMin;
+  uniform float uZMax;
+  uniform float uContrast;   // gamma on the brightness curve
+  uniform float uBrightness; // overall multiplier
+
+  // thin areas → warm backlight; thick areas → near-black
+  const vec3 LIGHT = vec3(1.00, 0.97, 0.88);
+  const vec3 DARK  = vec3(0.03, 0.02, 0.01);
+
+  void main() {
+    float t  = clamp((vZ - uZMin) / max(uZMax - uZMin, 0.001), 0.0, 1.0);
+    float br = clamp(pow(1.0 - t, uContrast) * uBrightness, 0.0, 1.0);
+    gl_FragColor = vec4(mix(DARK, LIGHT, br), 1.0);
+  }
+`;
+
 export class Preview {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
   private litMaterial: THREE.MeshStandardMaterial;
-  private backlitMaterial: THREE.MeshPhysicalMaterial;
+  private backlitUniforms = {
+    uZMin:       { value: 0.5 },
+    uZMax:       { value: 2.0 },
+    uContrast:   { value: 2.2 },
+    uBrightness: { value: 1.0 },
+  };
+  private backlitMaterial: THREE.ShaderMaterial;
   private wireMaterial: THREE.MeshBasicMaterial;
   private labelRenderer: CSS2DRenderer;
   private group = new THREE.Group();
@@ -33,6 +66,8 @@ export class Preview {
   private mode: RenderMode = 'lit';
   private renderRequested = false;
   private resizeObserver: ResizeObserver;
+  private frontGridW = 0;
+  private frontGridH = 0;
 
   constructor(private container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -69,11 +104,9 @@ export class Preview {
     const amb = new THREE.AmbientLight(0xffffff, 0.35);
     this.litLights = [key, fill, amb];
 
-    // --- Backlit setup: bright point behind, low front fill ---
-    const back = new THREE.PointLight(0xfff2c0, 80000, 2000, 1.6);
-    back.position.set(0, 0, -200); // behind the print (print sits with +Z facing camera)
-    const ambBack = new THREE.AmbientLight(0xffffff, 0.04);
-    this.backlitLights = [back, ambBack];
+    // --- Backlit setup: faint ambient only; shader handles all brightness ---
+    const ambBack = new THREE.AmbientLight(0xffeedd, 0.02);
+    this.backlitLights = [ambBack];
 
     // --- Materials ---
     this.litMaterial = new THREE.MeshStandardMaterial({
@@ -83,15 +116,10 @@ export class Preview {
       side: THREE.DoubleSide,
     });
 
-    this.backlitMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xfff5e0,
-      transmission: 0.95,
-      thickness: 1.2,
-      roughness: 0.45,
-      metalness: 0.0,
-      attenuationColor: 0xfff0c8,
-      attenuationDistance: 8,
-      ior: 1.45,
+    this.backlitMaterial = new THREE.ShaderMaterial({
+      uniforms: this.backlitUniforms,
+      vertexShader: BACKLIT_VERT,
+      fragmentShader: BACKLIT_FRAG,
       side: THREE.DoubleSide,
     });
 
@@ -140,11 +168,18 @@ export class Preview {
       this.group.remove(this.mesh);
       this.geometry?.dispose();
     }
+
+    this.frontGridW = m.gridWidth;
+    this.frontGridH = m.gridHeight;
+
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
     geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
     geo.computeVertexNormals();
     this.geometry = geo;
+
+    this._updateZUniforms(m.positions);
+
     const mat = this.currentMaterial();
     const threeMesh = new THREE.Mesh(geo, mat);
     // Recenter at origin so OrbitControls orbits around the print center.
@@ -162,8 +197,10 @@ export class Preview {
   /** Hot path: front-grid Z values were rewritten in place. */
   notifyZUpdated(): void {
     if (!this.geometry) return;
-    (this.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    const posAttr = this.geometry.attributes.position as THREE.BufferAttribute;
+    posAttr.needsUpdate = true;
     this.geometry.computeVertexNormals();
+    this._updateZUniforms(posAttr.array as Float32Array);
     this.requestRender();
   }
 
@@ -185,6 +222,30 @@ export class Preview {
     this.requestRender();
   }
 
+  setBacklitContrast(v: number): void {
+    this.backlitUniforms.uContrast.value = v;
+    this.requestRender();
+  }
+
+  setBacklitBrightness(v: number): void {
+    this.backlitUniforms.uBrightness.value = v;
+    this.requestRender();
+  }
+
+  private _updateZUniforms(positions: Float32Array): void {
+    const W = this.frontGridW;
+    const H = this.frontGridH;
+    if (W < 2 || H < 2) return;
+    let zMin = Infinity, zMax = -Infinity;
+    for (let k = 0; k < W * H; k++) {
+      const z = positions[k * 3 + 2];
+      if (z < zMin) zMin = z;
+      if (z > zMax) zMax = z;
+    }
+    this.backlitUniforms.uZMin.value = zMin;
+    this.backlitUniforms.uZMax.value = zMax;
+  }
+
   private applyMode(mode: RenderMode): void {
     // Clear all current lights
     [...this.litLights, ...this.backlitLights].forEach(l => this.scene.remove(l));
@@ -194,7 +255,7 @@ export class Preview {
       this.scene.background = new THREE.Color(0xefeee9);
     } else if (mode === 'backlit') {
       this.backlitLights.forEach(l => this.scene.add(l));
-      this.scene.background = new THREE.Color(0x141210);
+      this.scene.background = new THREE.Color(0x0c0a08); // dark room
     }
   }
 

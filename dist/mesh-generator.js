@@ -165,7 +165,9 @@ export function buildMesh(h, p) {
                 maxY,
                 maxZ_
             ]
-        }
+        },
+        gridWidth: W,
+        gridHeight: H
     };
 }
 function appendBox(pos, idx, vStart, iStart, xa, xb, ylo, yhi, zlo, zhi) {
@@ -292,7 +294,9 @@ export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10, tabWidth
                 yt,
                 zhi
             ]
-        }
+        },
+        gridWidth: panel.gridWidth,
+        gridHeight: panel.gridHeight
     };
 }
 export function updateFrontZ(positions, h, borderMm, _pixelMm, minZ, maxZ) {

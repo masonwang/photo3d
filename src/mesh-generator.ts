@@ -33,6 +33,8 @@ export type Mesh = {
   vertexCount: number;
   triangleCount: number;
   bbox: { min: [number, number, number]; max: [number, number, number] };
+  gridWidth: number;       // columns of the front heightmap grid
+  gridHeight: number;      // rows of the front heightmap grid
 };
 
 /**
@@ -287,6 +289,8 @@ export function buildMesh(h: Heightmap, p: MeshParams): Mesh {
     vertexCount: positions.length / 3,
     triangleCount: indices.length / 3,
     bbox: { min: [minX, minY, minZ_], max: [maxX, maxY, maxZ_] },
+    gridWidth: W,
+    gridHeight: H,
   };
 }
 
@@ -383,6 +387,8 @@ export function addBaseMesh(
       min: [x0, panel.bbox.min[1], zlo],
       max: [x1, yt, zhi],
     },
+    gridWidth: panel.gridWidth,
+    gridHeight: panel.gridHeight,
   };
 }
 

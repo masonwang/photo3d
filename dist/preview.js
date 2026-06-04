@@ -1,6 +1,30 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+const BACKLIT_VERT = `
+  varying float vZ;
+  void main() {
+    vZ = position.z;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const BACKLIT_FRAG = `
+  varying float vZ;
+  uniform float uZMin;
+  uniform float uZMax;
+  uniform float uContrast;   // gamma on the brightness curve
+  uniform float uBrightness; // overall multiplier
+
+  // thin areas → warm backlight; thick areas → near-black
+  const vec3 LIGHT = vec3(1.00, 0.97, 0.88);
+  const vec3 DARK  = vec3(0.03, 0.02, 0.01);
+
+  void main() {
+    float t  = clamp((vZ - uZMin) / max(uZMax - uZMin, 0.001), 0.0, 1.0);
+    float br = clamp(pow(1.0 - t, uContrast) * uBrightness, 0.0, 1.0);
+    gl_FragColor = vec4(mix(DARK, LIGHT, br), 1.0);
+  }
+`;
 export class Preview {
     container;
     renderer;
@@ -8,6 +32,20 @@ export class Preview {
     camera;
     controls;
     litMaterial;
+    backlitUniforms = {
+        uZMin: {
+            value: 0.5
+        },
+        uZMax: {
+            value: 2.0
+        },
+        uContrast: {
+            value: 2.2
+        },
+        uBrightness: {
+            value: 1.0
+        }
+    };
     backlitMaterial;
     wireMaterial;
     labelRenderer;
@@ -21,6 +59,8 @@ export class Preview {
     mode = 'lit';
     renderRequested = false;
     resizeObserver;
+    frontGridW = 0;
+    frontGridH = 0;
     constructor(container){
         this.container = container;
         this.renderer = new THREE.WebGLRenderer({
@@ -56,11 +96,8 @@ export class Preview {
             fill,
             amb
         ];
-        const back = new THREE.PointLight(0xfff2c0, 80000, 2000, 1.6);
-        back.position.set(0, 0, -200);
-        const ambBack = new THREE.AmbientLight(0xffffff, 0.04);
+        const ambBack = new THREE.AmbientLight(0xffeedd, 0.02);
         this.backlitLights = [
-            back,
             ambBack
         ];
         this.litMaterial = new THREE.MeshStandardMaterial({
@@ -69,15 +106,10 @@ export class Preview {
             metalness: 0.0,
             side: THREE.DoubleSide
         });
-        this.backlitMaterial = new THREE.MeshPhysicalMaterial({
-            color: 0xfff5e0,
-            transmission: 0.95,
-            thickness: 1.2,
-            roughness: 0.45,
-            metalness: 0.0,
-            attenuationColor: 0xfff0c8,
-            attenuationDistance: 8,
-            ior: 1.45,
+        this.backlitMaterial = new THREE.ShaderMaterial({
+            uniforms: this.backlitUniforms,
+            vertexShader: BACKLIT_VERT,
+            fragmentShader: BACKLIT_FRAG,
             side: THREE.DoubleSide
         });
         this.wireMaterial = new THREE.MeshBasicMaterial({
@@ -116,11 +148,14 @@ export class Preview {
             this.group.remove(this.mesh);
             this.geometry?.dispose();
         }
+        this.frontGridW = m.gridWidth;
+        this.frontGridH = m.gridHeight;
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
         geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
         geo.computeVertexNormals();
         this.geometry = geo;
+        this._updateZUniforms(m.positions);
         const mat = this.currentMaterial();
         const threeMesh = new THREE.Mesh(geo, mat);
         const cx = (m.bbox.min[0] + m.bbox.max[0]) / 2;
@@ -135,8 +170,10 @@ export class Preview {
     }
     notifyZUpdated() {
         if (!this.geometry) return;
-        this.geometry.attributes.position.needsUpdate = true;
+        const posAttr = this.geometry.attributes.position;
+        posAttr.needsUpdate = true;
         this.geometry.computeVertexNormals();
+        this._updateZUniforms(posAttr.array);
         this.requestRender();
     }
     setScale(scale) {
@@ -154,6 +191,27 @@ export class Preview {
         }
         this.requestRender();
     }
+    setBacklitContrast(v) {
+        this.backlitUniforms.uContrast.value = v;
+        this.requestRender();
+    }
+    setBacklitBrightness(v) {
+        this.backlitUniforms.uBrightness.value = v;
+        this.requestRender();
+    }
+    _updateZUniforms(positions) {
+        const W = this.frontGridW;
+        const H = this.frontGridH;
+        if (W < 2 || H < 2) return;
+        let zMin = Infinity, zMax = -Infinity;
+        for(let k = 0; k < W * H; k++){
+            const z = positions[k * 3 + 2];
+            if (z < zMin) zMin = z;
+            if (z > zMax) zMax = z;
+        }
+        this.backlitUniforms.uZMin.value = zMin;
+        this.backlitUniforms.uZMax.value = zMax;
+    }
     applyMode(mode) {
         [
             ...this.litLights,
@@ -164,7 +222,7 @@ export class Preview {
             this.scene.background = new THREE.Color(0xefeee9);
         } else if (mode === 'backlit') {
             this.backlitLights.forEach((l)=>this.scene.add(l));
-            this.scene.background = new THREE.Color(0x141210);
+            this.scene.background = new THREE.Color(0x0c0a08);
         }
     }
     currentMaterial() {
