@@ -1,27 +1,78 @@
 /**
- * UI controls: builds the slider/toggle panel and wires it to the param store.
+ * UI controls: shape dropdown + shape-specific params always visible,
+ * common lithophane params hidden behind a "Customize" toggle.
  */
 
-import { ParamStore, defaultParams } from './store';
+import { ParamStore } from './store';
 import type { Params } from './store';
 
-type ControlSpec =
-  | {
-      kind: 'range';
-      key: keyof Params;
-      label: string;
-      min: number;
-      max: number;
-      step: number;
-      format?: (v: number) => string;
-    }
-  | { kind: 'toggle'; key: keyof Params; label: string };
+type RangeSpec = {
+  kind: 'range';
+  key: keyof Params;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  format?: (v: number) => string;
+};
 
-const GROUPS: Array<{ title: string; controls: ControlSpec[] }> = [
+type ToggleSpec = {
+  kind: 'toggle';
+  key: keyof Params;
+  label: string;
+};
+
+type ControlSpec = RangeSpec | ToggleSpec;
+
+type ControlGroup = { title: string; controls: ControlSpec[] };
+
+export type Shape = {
+  id: string;
+  name: string;
+  shapeGroups: ControlGroup[];  // shape-specific params shown by default
+  defaults: Partial<Params>;    // full set of defaults for this shape
+};
+
+export const SHAPES: Shape[] = [
   {
-    title: 'Geometry',
+    id: 'curve',
+    name: 'Curve',
+    shapeGroups: [
+      {
+        title: 'Geometry',
+        controls: [
+          { kind: 'range', key: 'widthMm', label: 'Width', min: 30, max: 250, step: 1, format: v => `${v.toFixed(0)} mm` },
+          { kind: 'range', key: 'heightMm', label: 'Height', min: 0, max: 300, step: 1, format: v => v === 0 ? 'auto' : `${v.toFixed(0)} mm` },
+          { kind: 'range', key: 'arcDeg', label: 'Arc angle', min: 10, max: 150, step: 5, format: v => `${v.toFixed(0)}°` },
+        ],
+      },
+    ],
+    defaults: {
+      widthMm: 100,
+      arcDeg: 90,
+      heightMm: 0,
+      minThicknessMm: 0.5,
+      maxThicknessMm: 2.0,
+      pixelsPerMm: 10,
+      borderMm: 0,
+      baseExtendMm: 5,
+      baseHeightMm: 0.5,
+      baseTabWidthMm: 1,
+      mirror: false,
+      invert: true,
+      gamma: 1.0,
+      brightness: 0,
+      contrast: 30,
+      smoothingPx: 1,
+      asciiStl: false,
+    },
+  },
+];
+
+const COMMON_GROUPS: ControlGroup[] = [
+  {
+    title: 'Lithophane',
     controls: [
-      { kind: 'range', key: 'widthMm', label: 'Width', min: 30, max: 250, step: 1, format: v => `${v.toFixed(0)} mm` },
       { kind: 'range', key: 'minThicknessMm', label: 'Min thickness', min: 0.4, max: 1.5, step: 0.05, format: v => `${v.toFixed(2)} mm` },
       { kind: 'range', key: 'maxThicknessMm', label: 'Max thickness', min: 1.5, max: 4.5, step: 0.05, format: v => `${v.toFixed(2)} mm` },
       { kind: 'range', key: 'pixelsPerMm', label: 'Resolution', min: 4, max: 14, step: 1, format: v => `${v.toFixed(0)} px/mm` },
@@ -47,8 +98,8 @@ const GROUPS: Array<{ title: string; controls: ControlSpec[] }> = [
   {
     title: 'Base',
     controls: [
-      { kind: 'range', key: 'baseExtendMm', label: 'Width', min: 0, max: 30, step: 0.5, format: v => `${v.toFixed(1)} mm` },
-      { kind: 'range', key: 'baseHeightMm', label: 'Depth', min: 0, max: 10, step: 0.5, format: v => `${v.toFixed(1)} mm` },
+      { kind: 'range', key: 'baseExtendMm', label: 'Extend', min: 0, max: 30, step: 0.5, format: v => `${v.toFixed(1)} mm` },
+      { kind: 'range', key: 'baseHeightMm', label: 'Height', min: 0, max: 10, step: 0.5, format: v => `${v.toFixed(1)} mm` },
       { kind: 'range', key: 'baseTabWidthMm', label: 'Tab width', min: 0, max: 10, step: 0.5, format: v => v === 0 ? 'solid' : `${v.toFixed(1)} mm` },
     ],
   },
@@ -60,84 +111,181 @@ const GROUPS: Array<{ title: string; controls: ControlSpec[] }> = [
   },
 ];
 
-export function mountControls(host: HTMLElement, store: ParamStore): void {
+export function mountControls(
+  host: HTMLElement,
+  store: ParamStore,
+  onShapeChange: (id: string) => void,
+): { commonHost: HTMLElement } {
   host.innerHTML = '';
-  const valueEls: Map<string, HTMLElement> = new Map();
-  const inputEls: Map<string, HTMLInputElement> = new Map();
 
-  for (const g of GROUPS) {
-    const groupEl = document.createElement('div');
-    groupEl.className = 'control-group';
-    const h = document.createElement('h3');
-    h.textContent = g.title;
-    groupEl.appendChild(h);
+  // Track all live input elements so we can refresh them after a shape switch
+  const inputEls = new Map<string, HTMLInputElement>();
+  const valueEls = new Map<string, HTMLElement>();
+  const formatFns = new Map<string, ((v: number) => string) | undefined>();
+  let shapeKeys = new Set<string>();
+  let currentShape = SHAPES[0];
 
-    for (const c of g.controls) {
-      const row = document.createElement('div');
-      row.className = c.kind === 'toggle' ? 'control-row toggle' : 'control-row';
-      const lbl = document.createElement('label');
-      lbl.textContent = c.label;
-      row.appendChild(lbl);
+  // ── helpers ──────────────────────────────────────────────────────────────
 
-      if (c.kind === 'range') {
-        const input = document.createElement('input');
-        input.type = 'range';
-        input.min = String(c.min);
-        input.max = String(c.max);
-        input.step = String(c.step);
-        const cur = store.get()[c.key] as number;
-        input.value = String(cur);
-        const valEl = document.createElement('span');
-        valEl.className = 'value';
-        valEl.textContent = c.format ? c.format(cur) : String(cur);
+  function buildControl(c: ControlSpec, container: HTMLElement, trackSet: Set<string>): void {
+    const row = document.createElement('div');
+    row.className = c.kind === 'toggle' ? 'control-row toggle' : 'control-row';
+    const lbl = document.createElement('label');
+    lbl.textContent = c.label;
+    lbl.htmlFor = `ctl-${c.key}`;
+    row.appendChild(lbl);
 
-        input.addEventListener('input', () => {
-          const v = Number(input.value);
-          store.set(c.key, v as any);
-          valEl.textContent = c.format ? c.format(v) : String(v);
-        });
-
-        row.appendChild(input);
-        row.appendChild(valEl);
-        valueEls.set(c.key, valEl);
-        inputEls.set(c.key, input);
-      } else {
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = Boolean(store.get()[c.key]);
-        input.addEventListener('change', () => {
-          store.set(c.key, input.checked as any);
-        });
-        row.appendChild(input);
-        inputEls.set(c.key, input);
-      }
-      lbl.htmlFor = `ctl-${c.key}`;
-      groupEl.appendChild(row);
+    if (c.kind === 'range') {
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.id = `ctl-${c.key}`;
+      input.min = String(c.min);
+      input.max = String(c.max);
+      input.step = String(c.step);
+      const cur = store.get()[c.key] as number;
+      input.value = String(cur);
+      const valEl = document.createElement('span');
+      valEl.className = 'value';
+      valEl.textContent = c.format ? c.format(cur) : String(cur);
+      input.addEventListener('input', () => {
+        const v = Number(input.value);
+        store.set(c.key, v as any);
+        valEl.textContent = c.format ? c.format(v) : String(v);
+      });
+      row.appendChild(input);
+      row.appendChild(valEl);
+      valueEls.set(c.key, valEl);
+      formatFns.set(c.key, c.format);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = `ctl-${c.key}`;
+      input.checked = Boolean(store.get()[c.key]);
+      input.addEventListener('change', () => store.set(c.key, input.checked as any));
+      row.appendChild(input);
     }
-    host.appendChild(groupEl);
+    inputEls.set(c.key, row.querySelector('input') as HTMLInputElement);
+    trackSet.add(c.key);
+    container.appendChild(row);
   }
 
-  // Reset button
-  const resetWrap = document.createElement('div');
-  resetWrap.className = 'control-group';
-  const btn = document.createElement('button');
-  btn.textContent = 'Reset to defaults';
-  btn.addEventListener('click', () => {
-    store.setMany({ ...defaultParams });
-    // refresh UI inputs
+  function buildGroups(groups: ControlGroup[], container: HTMLElement, trackSet: Set<string>): void {
+    for (const g of groups) {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'control-group';
+      const h3 = document.createElement('h3');
+      h3.textContent = g.title;
+      groupEl.appendChild(h3);
+      for (const c of g.controls) buildControl(c, groupEl, trackSet);
+      container.appendChild(groupEl);
+    }
+  }
+
+  function refreshInputs(): void {
     for (const [k, el] of inputEls) {
       const v = (store.get() as any)[k];
-      if (el.type === 'checkbox') el.checked = Boolean(v);
-      else el.value = String(v);
+      if (el.type === 'checkbox') {
+        el.checked = Boolean(v);
+      } else {
+        el.value = String(v);
+        const valEl = valueEls.get(k);
+        if (valEl) {
+          const fmt = formatFns.get(k);
+          valEl.textContent = fmt ? fmt(v as number) : String(v);
+        }
+      }
     }
-    for (const g of GROUPS) for (const c of g.controls) if (c.kind === 'range') {
-      const v = (store.get() as any)[c.key] as number;
-      const el = valueEls.get(c.key);
-      if (el) el.textContent = c.format ? c.format(v) : String(v);
+  }
+
+  // ── Shape selector ────────────────────────────────────────────────────────
+
+  const shapeSectionEl = document.createElement('div');
+  shapeSectionEl.className = 'control-group shape-selector-group';
+  const shapeLabel = document.createElement('h3');
+  shapeLabel.textContent = 'Shape';
+  shapeSectionEl.appendChild(shapeLabel);
+
+  const select = document.createElement('select');
+  select.className = 'shape-select';
+  for (const s of SHAPES) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    select.appendChild(opt);
+  }
+  shapeSectionEl.appendChild(select);
+  host.appendChild(shapeSectionEl);
+
+  // ── Shape-specific params ─────────────────────────────────────────────────
+
+  const shapeParamsHost = document.createElement('div');
+  host.appendChild(shapeParamsHost);
+
+  function renderShapeParams(shape: Shape): void {
+    // Clean up old shape-specific tracking
+    for (const k of shapeKeys) {
+      inputEls.delete(k);
+      valueEls.delete(k);
+      formatFns.delete(k);
     }
+    shapeKeys = new Set();
+    shapeParamsHost.innerHTML = '';
+    buildGroups(shape.shapeGroups, shapeParamsHost, shapeKeys);
+  }
+
+  renderShapeParams(currentShape);
+
+  // ── Divider + Customize toggle ────────────────────────────────────────────
+
+  const customizeWrap = document.createElement('div');
+  customizeWrap.className = 'customize-wrap';
+
+  const customizeBtn = document.createElement('button');
+  customizeBtn.className = 'customize-btn';
+  customizeBtn.textContent = 'Customize ▸';
+  customizeWrap.appendChild(customizeBtn);
+  host.appendChild(customizeWrap);
+
+  // ── Common params (hidden until Customize clicked) ────────────────────────
+
+  const commonHost = document.createElement('div');
+  commonHost.className = 'common-params';
+  commonHost.hidden = true;
+  const commonKeys = new Set<string>();
+  buildGroups(COMMON_GROUPS, commonHost, commonKeys);
+  host.appendChild(commonHost);
+
+  customizeBtn.addEventListener('click', () => {
+    const open = !commonHost.hidden;
+    commonHost.hidden = open;
+    customizeBtn.textContent = open ? 'Customize ▸' : 'Customize ▾';
   });
-  resetWrap.appendChild(btn);
+
+  // ── Reset to shape defaults ───────────────────────────────────────────────
+
+  const resetWrap = document.createElement('div');
+  resetWrap.className = 'control-group';
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset to defaults';
+  resetBtn.addEventListener('click', () => {
+    store.setMany({ ...currentShape.defaults });
+    refreshInputs();
+  });
+  resetWrap.appendChild(resetBtn);
   host.appendChild(resetWrap);
+
+  // ── Shape change ──────────────────────────────────────────────────────────
+
+  select.addEventListener('change', () => {
+    const shape = SHAPES.find(s => s.id === select.value) ?? SHAPES[0];
+    currentShape = shape;
+    store.setMany({ ...shape.defaults });
+    renderShapeParams(shape);
+    refreshInputs();
+    onShapeChange(shape.id);
+  });
+
+  return { commonHost };
 }
 
 export function showStatus(host: HTMLElement, text: string, hideAfterMs = 1500, type: 'info' | 'error' = 'info'): void {

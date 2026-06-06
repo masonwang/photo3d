@@ -1,9 +1,9 @@
 /**
  * Wire-up: file load -> image processor -> mesh generator -> preview, and
- * route parameter changes through the hot/cold/free paths.
+ * route parameter changes through the hot/cold paths.
  */
 
-import { ParamStore, HOT_KEYS, COLD_KEYS, FREE_KEYS } from './store';
+import { ParamStore, HOT_KEYS, COLD_KEYS } from './store';
 import type { Params } from './store';
 import {
   decodeImageToRgba,
@@ -15,7 +15,7 @@ import {
   type Rgba,
   type Luminance,
 } from './image-processor';
-import { buildMesh, addBaseMesh, updateFrontZ, type Mesh } from './mesh-generator';
+import { buildCurvedMesh, addBaseMesh, updateFrontCurved, type Mesh } from './mesh-generator';
 import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer';
 import { Preview } from './preview';
 import type { RenderMode, ViewPreset } from './preview';
@@ -51,9 +51,10 @@ let lastRawDepth: Luminance | null = null; // cached AI depth at model resolutio
 let useDepthAI = true;
 // 0 = pure photo luminance, 1 = pure AI depth; blends the two for portraits
 let depthBlend = 0.7;
-
-mountControls(controlsHost, store);
-mountDepthAiButton(controlsHost);
+const { commonHost } = mountControls(controlsHost, store, (_shapeId) => {
+  // store.setMany(shape.defaults) already fired cold-key subscriptions → rebuild
+});
+mountDepthAiButton(commonHost);
 const preview = new Preview(previewHost);
 
 let coldPathTimer: number | null = null;
@@ -69,11 +70,17 @@ function updateDims(): void {
 
 /** Derive the target grid size from current params and source aspect ratio. */
 function gridSize(): { gridW: number; gridH: number } {
-  if (!sourceRgba) return { gridW: 8, gridH: 8 };
   const p = store.get();
   const gridW = Math.max(8, Math.round(p.widthMm * p.pixelsPerMm));
-  const aspect = sourceRgba.height / sourceRgba.width;
-  const gridH = Math.max(8, Math.round(gridW * aspect));
+  let gridH: number;
+  if (p.heightMm > 0) {
+    gridH = Math.max(8, Math.round(p.heightMm * p.pixelsPerMm));
+  } else if (sourceRgba) {
+    const aspect = sourceRgba.height / sourceRgba.width;
+    gridH = Math.max(8, Math.round(gridW * aspect));
+  } else {
+    gridH = gridW;
+  }
   return { gridW, gridH };
 }
 
@@ -91,8 +98,6 @@ function deriveLuminance(gridW: number, gridH: number): Luminance {
     if (depthBlend >= 1) {
       return applyImageParams(depth, gridW, gridH, p);
     }
-    // Blend AI depth with raw photo grayscale so portrait surface detail
-    // (captured by lighting) mixes with the AI's depth field.
     const photo = rgbaToGrey(resampleRgba(sourceRgba!, gridW, gridH));
     const mixed = new Float32Array(gridW * gridH);
     for (let i = 0; i < mixed.length; i++) {
@@ -104,23 +109,32 @@ function deriveLuminance(gridW: number, gridH: number): Luminance {
   return rgbaToLuminance(resampled, p);
 }
 
+function curvedParams(p: Readonly<Params>) {
+  return {
+    widthMm: p.widthMm,
+    arcDeg: p.arcDeg,
+    minThicknessMm: p.minThicknessMm,
+    maxThicknessMm: p.maxThicknessMm,
+    borderMm: p.borderMm,
+  };
+}
+
 function buildAndShow(): void {
   if (!sourceRgba) return;
   const p = store.get();
   const { gridW, gridH } = gridSize();
   const lum = deriveLuminance(gridW, gridH);
   lastLum = lum;
-  const panel = buildMesh(
+  const cp = curvedParams(p);
+  const panel = buildCurvedMesh(
     { width: lum.width, height: lum.height, data: lum.data },
-    {
-      widthMm: p.widthMm,
-      minThicknessMm: p.minThicknessMm,
-      maxThicknessMm: p.maxThicknessMm,
-      borderMm: p.borderMm,
-    },
+    cp,
   );
   const mesh = addBaseMesh(panel, p.baseHeightMm, p.baseExtendMm, p.baseTabWidthMm);
   lastMesh = mesh;
+  const R = cp.widthMm / (cp.arcDeg * Math.PI / 180);
+  const yMid = (panel.bbox.min[1] + panel.bbox.max[1]) / 2;
+  preview.setLightCenter(R, yMid);
   preview.setMesh(mesh);
   emptyMsg.style.display = 'none';
   downloadBtn.disabled = false;
@@ -133,13 +147,10 @@ function hotZUpdate(): void {
   const { gridW, gridH } = gridSize();
   const lum = deriveLuminance(gridW, gridH);
   lastLum = lum;
-  updateFrontZ(
+  updateFrontCurved(
     lastMesh.positions,
     { width: lum.width, height: lum.height, data: lum.data },
-    p.borderMm,
-    p.widthMm / lum.width,
-    p.minThicknessMm,
-    p.maxThicknessMm,
+    curvedParams(p),
   );
   preview.notifyZUpdated();
   updateDims();
@@ -166,15 +177,9 @@ store.subscribe(COLD_KEYS, () => {
   scheduleColdRebuild();
 });
 
-store.subscribe(FREE_KEYS, () => {
-  if (!sourceRgba) return;
-  scheduleColdRebuild();
-});
-
 async function proceedWithSource(): Promise<void> {
   if (!sourceRgba) return;
   showStatus(statusPill, 'Building…', 0);
-  // Yield so the browser repaints the loading indicator before synchronous work runs.
   await new Promise<void>(r => setTimeout(r, 0));
   if (useDepthAI) {
     await runDepthEstimation();
@@ -206,7 +211,7 @@ function openCropModal(): void {
 // --- File input ---
 fileInput.addEventListener('change', async () => {
   const f = fileInput.files?.[0];
-  fileInput.value = '';  // reset so re-selecting the same file fires change again
+  fileInput.value = '';
   if (!f) return;
   showStatus(statusPill, 'Decoding image…', 0);
   try {
@@ -395,6 +400,5 @@ function mountDepthAiButton(host: HTMLElement): void {
 
   host.appendChild(section);
 
-  // Sync button label/note with initial useDepthAI state.
   updateDepthAiButton();
 }

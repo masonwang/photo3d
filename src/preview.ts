@@ -16,15 +16,31 @@ export type RenderMode = 'lit' | 'backlit' | 'wireframe';
 export type ViewPreset = 'front' | 'back' | 'top' | 'three-quarter';
 
 const BACKLIT_VERT = /* glsl */`
-  varying float vZ;
+  varying float vThickness;
+  varying float vFalloff;
+  uniform float uR;    // cylinder inner radius; 0 = flat panel
+  uniform float uYMid; // y-coordinate of panel centre in mesh space
+
   void main() {
-    vZ = position.z;
+    if (uR > 0.0) {
+      // Radial thickness from cylinder axis (x=0, z=-R in mesh space).
+      float radial = sqrt(position.x * position.x + (position.z + uR) * (position.z + uR));
+      vThickness = radial - uR;
+      // Cosine falloff: point light at (0, uYMid, -R).
+      // cos(angle from horizontal) = R / sqrt(R² + dy²)
+      float dy = position.y - uYMid;
+      vFalloff = uR / sqrt(uR * uR + dy * dy);
+    } else {
+      vThickness = position.z;
+      vFalloff = 1.0;
+    }
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
 const BACKLIT_FRAG = /* glsl */`
-  varying float vZ;
+  varying float vThickness;
+  varying float vFalloff;
   uniform float uZMin;
   uniform float uZMax;
   uniform float uContrast;   // gamma on the brightness curve
@@ -35,8 +51,8 @@ const BACKLIT_FRAG = /* glsl */`
   const vec3 DARK  = vec3(0.03, 0.02, 0.01);
 
   void main() {
-    float t  = clamp((vZ - uZMin) / max(uZMax - uZMin, 0.001), 0.0, 1.0);
-    float br = clamp(pow(1.0 - t, uContrast) * uBrightness, 0.0, 1.0);
+    float t  = clamp((vThickness - uZMin) / max(uZMax - uZMin, 0.001), 0.0, 1.0);
+    float br = clamp(pow(1.0 - t, uContrast) * uBrightness * vFalloff, 0.0, 1.0);
     gl_FragColor = vec4(mix(DARK, LIGHT, br), 1.0);
   }
 `;
@@ -52,6 +68,8 @@ export class Preview {
     uZMax:       { value: 2.0 },
     uContrast:   { value: 2.2 },
     uBrightness: { value: 1.0 },
+    uR:          { value: 0.0 },  // cylinder inner radius; 0 = flat panel
+    uYMid:       { value: 0.0 },  // y-coordinate of panel centre in mesh space
   };
   private backlitMaterial: THREE.ShaderMaterial;
   private wireMaterial: THREE.MeshBasicMaterial;
@@ -233,17 +251,27 @@ export class Preview {
   }
 
   private _updateZUniforms(positions: Float32Array): void {
-    const W = this.frontGridW;
-    const H = this.frontGridH;
+    const W = this.frontGridW, H = this.frontGridH;
     if (W < 2 || H < 2) return;
-    let zMin = Infinity, zMax = -Infinity;
+    const R = this.backlitUniforms.uR.value;
+    let tMin = Infinity, tMax = -Infinity;
     for (let k = 0; k < W * H; k++) {
+      const x = positions[k * 3 + 0];
       const z = positions[k * 3 + 2];
-      if (z < zMin) zMin = z;
-      if (z > zMax) zMax = z;
+      const thickness = R > 0
+        ? Math.sqrt(x * x + (z + R) * (z + R)) - R  // radial thickness for curved
+        : z;                                           // z for flat
+      if (thickness < tMin) tMin = thickness;
+      if (thickness > tMax) tMax = thickness;
     }
-    this.backlitUniforms.uZMin.value = zMin;
-    this.backlitUniforms.uZMax.value = zMax;
+    this.backlitUniforms.uZMin.value = tMin;
+    this.backlitUniforms.uZMax.value = tMax;
+  }
+
+  /** Set the point-light position for the backlit shader (R=0 = flat panel). */
+  setLightCenter(R: number, yMid: number): void {
+    this.backlitUniforms.uR.value = R;
+    this.backlitUniforms.uYMid.value = yMid;
   }
 
   private applyMode(mode: RenderMode): void {

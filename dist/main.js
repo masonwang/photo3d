@@ -1,6 +1,6 @@
-import { ParamStore, HOT_KEYS, COLD_KEYS, FREE_KEYS } from './store.js';
+import { ParamStore, HOT_KEYS, COLD_KEYS } from './store.js';
 import { decodeImageToRgba, resampleRgba, rgbaToLuminance, rgbaToGrey, resampleFloat32Bilinear, applyImageParams } from './image-processor.js';
-import { buildMesh, addBaseMesh, updateFrontZ } from './mesh-generator.js';
+import { buildCurvedMesh, addBaseMesh, updateFrontCurved } from './mesh-generator.js';
 import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer.js';
 import { Preview } from './preview.js';
 import { mountControls, showStatus } from './ui.js';
@@ -32,8 +32,8 @@ let lastMesh = null;
 let lastRawDepth = null;
 let useDepthAI = true;
 let depthBlend = 0.7;
-mountControls(controlsHost, store);
-mountDepthAiButton(controlsHost);
+const { commonHost } = mountControls(controlsHost, store, (_shapeId)=>{});
+mountDepthAiButton(commonHost);
 const preview = new Preview(previewHost);
 let coldPathTimer = null;
 function updateDims() {
@@ -45,14 +45,17 @@ function updateDims() {
     dimsEl.style.display = 'block';
 }
 function gridSize() {
-    if (!sourceRgba) return {
-        gridW: 8,
-        gridH: 8
-    };
     const p = store.get();
     const gridW = Math.max(8, Math.round(p.widthMm * p.pixelsPerMm));
-    const aspect = sourceRgba.height / sourceRgba.width;
-    const gridH = Math.max(8, Math.round(gridW * aspect));
+    let gridH;
+    if (p.heightMm > 0) {
+        gridH = Math.max(8, Math.round(p.heightMm * p.pixelsPerMm));
+    } else if (sourceRgba) {
+        const aspect = sourceRgba.height / sourceRgba.width;
+        gridH = Math.max(8, Math.round(gridW * aspect));
+    } else {
+        gridH = gridW;
+    }
     return {
         gridW,
         gridH
@@ -75,24 +78,32 @@ function deriveLuminance(gridW, gridH) {
     const resampled = resampleRgba(sourceRgba, gridW, gridH);
     return rgbaToLuminance(resampled, p);
 }
+function curvedParams(p) {
+    return {
+        widthMm: p.widthMm,
+        arcDeg: p.arcDeg,
+        minThicknessMm: p.minThicknessMm,
+        maxThicknessMm: p.maxThicknessMm,
+        borderMm: p.borderMm
+    };
+}
 function buildAndShow() {
     if (!sourceRgba) return;
     const p = store.get();
     const { gridW, gridH } = gridSize();
     const lum = deriveLuminance(gridW, gridH);
     lastLum = lum;
-    const panel = buildMesh({
+    const cp = curvedParams(p);
+    const panel = buildCurvedMesh({
         width: lum.width,
         height: lum.height,
         data: lum.data
-    }, {
-        widthMm: p.widthMm,
-        minThicknessMm: p.minThicknessMm,
-        maxThicknessMm: p.maxThicknessMm,
-        borderMm: p.borderMm
-    });
+    }, cp);
     const mesh = addBaseMesh(panel, p.baseHeightMm, p.baseExtendMm, p.baseTabWidthMm);
     lastMesh = mesh;
+    const R = cp.widthMm / (cp.arcDeg * Math.PI / 180);
+    const yMid = (panel.bbox.min[1] + panel.bbox.max[1]) / 2;
+    preview.setLightCenter(R, yMid);
     preview.setMesh(mesh);
     emptyMsg.style.display = 'none';
     downloadBtn.disabled = false;
@@ -104,11 +115,11 @@ function hotZUpdate() {
     const { gridW, gridH } = gridSize();
     const lum = deriveLuminance(gridW, gridH);
     lastLum = lum;
-    updateFrontZ(lastMesh.positions, {
+    updateFrontCurved(lastMesh.positions, {
         width: lum.width,
         height: lum.height,
         data: lum.data
-    }, p.borderMm, p.widthMm / lum.width, p.minThicknessMm, p.maxThicknessMm);
+    }, curvedParams(p));
     preview.notifyZUpdated();
     updateDims();
 }
@@ -126,10 +137,6 @@ store.subscribe(HOT_KEYS, ()=>{
     hotZUpdate();
 });
 store.subscribe(COLD_KEYS, ()=>{
-    if (!sourceRgba) return;
-    scheduleColdRebuild();
-});
-store.subscribe(FREE_KEYS, ()=>{
     if (!sourceRgba) return;
     scheduleColdRebuild();
 });

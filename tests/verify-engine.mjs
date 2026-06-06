@@ -181,13 +181,13 @@ console.log('\n=== parameter store (extended) ===');
   check('setMany mixed hot+cold fires hot subscriber once', hotHits === 1);
   check('setMany mixed hot+cold fires cold subscriber once', coldHits === 1);
 
-  // FREE key (widthMm) fires a widthMm-subscriber but not hot/cold subscribers
-  let freeHits = 0;
-  store.subscribe(new Set(['widthMm']), () => freeHits++);
+  // widthMm is now a COLD key (affects curved mesh geometry)
+  let widthHits = 0;
+  store.subscribe(new Set(['widthMm']), () => widthHits++);
   store.set('widthMm', 50);
-  check('widthMm (FREE) notifies a widthMm subscriber', freeHits === 1);
-  check('widthMm (FREE) does not trigger hot subscriber', hotHits === 1);
-  check('widthMm (FREE) does not trigger cold subscriber', coldHits === 1);
+  check('widthMm notifies a widthMm subscriber', widthHits === 1);
+  check('widthMm does not trigger hot subscriber', hotHits === 1);
+  check('widthMm triggers cold subscriber', coldHits === 2);
 
   // Subscriber receives the correct changedKeys set
   let receivedKeys = null;

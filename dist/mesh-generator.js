@@ -170,6 +170,99 @@ export function buildMesh(h, p) {
         gridHeight: H
     };
 }
+export function buildCurvedMesh(h, p) {
+    const W = h.width, H = h.height;
+    if (W < 2 || H < 2) throw new Error('Heightmap must be at least 2x2');
+    const arcRad = p.arcDeg * Math.PI / 180;
+    const R = p.widthMm / arcRad;
+    const mmPerPxH = p.widthMm * H / W / (H - 1);
+    const minZ = p.minThicknessMm, maxZ = p.maxThicknessMm;
+    const borderMm = Math.max(0, p.borderMm);
+    const positions = [];
+    const indices = [];
+    const colPhi = (i)=>(i / (W - 1) - 0.5) * arcRad;
+    const rowY = (j)=>(H - 1 - j) * mmPerPxH;
+    for(let j = 0; j < H; j++){
+        for(let i = 0; i < W; i++){
+            const phi = colPhi(i);
+            const t = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
+            const r = R + t;
+            positions.push(r * Math.sin(phi), rowY(j), r * Math.cos(phi) - R);
+        }
+    }
+    const frontIdx = (i, j)=>j * W + i;
+    for(let j = 0; j < H - 1; j++){
+        for(let i = 0; i < W - 1; i++){
+            const v00 = frontIdx(i, j), v10 = frontIdx(i + 1, j);
+            const v01 = frontIdx(i, j + 1), v11 = frontIdx(i + 1, j + 1);
+            indices.push(v00, v01, v11);
+            indices.push(v00, v11, v10);
+        }
+    }
+    const backBase = W * H;
+    for(let j = 0; j < H; j++){
+        for(let i = 0; i < W; i++){
+            const phi = colPhi(i);
+            positions.push(R * Math.sin(phi), rowY(j), R * Math.cos(phi) - R);
+        }
+    }
+    const backIdx = (i, j)=>backBase + j * W + i;
+    for(let j = 0; j < H - 1; j++){
+        for(let i = 0; i < W - 1; i++){
+            const v00 = backIdx(i, j), v10 = backIdx(i + 1, j);
+            const v01 = backIdx(i, j + 1), v11 = backIdx(i + 1, j + 1);
+            indices.push(v00, v11, v01);
+            indices.push(v00, v10, v11);
+        }
+    }
+    for(let i = 0; i < W - 1; i++){
+        indices.push(frontIdx(i, 0), frontIdx(i + 1, 0), backIdx(i + 1, 0));
+        indices.push(frontIdx(i, 0), backIdx(i + 1, 0), backIdx(i, 0));
+    }
+    for(let i = 0; i < W - 1; i++){
+        indices.push(frontIdx(i, H - 1), backIdx(i, H - 1), backIdx(i + 1, H - 1));
+        indices.push(frontIdx(i, H - 1), backIdx(i + 1, H - 1), frontIdx(i + 1, H - 1));
+    }
+    for(let j = 0; j < H - 1; j++){
+        indices.push(frontIdx(0, j), backIdx(0, j), backIdx(0, j + 1));
+        indices.push(frontIdx(0, j), backIdx(0, j + 1), frontIdx(0, j + 1));
+    }
+    for(let j = 0; j < H - 1; j++){
+        indices.push(backIdx(W - 1, j), frontIdx(W - 1, j), frontIdx(W - 1, j + 1));
+        indices.push(backIdx(W - 1, j), frontIdx(W - 1, j + 1), backIdx(W - 1, j + 1));
+    }
+    let minX = Infinity, minY = Infinity, minZ_ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ_ = -Infinity;
+    for(let i = 0; i < positions.length; i += 3){
+        const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (z < minZ_) minZ_ = z;
+        if (z > maxZ_) maxZ_ = z;
+    }
+    return {
+        positions: new Float32Array(positions),
+        indices: new Uint32Array(indices),
+        vertexCount: positions.length / 3,
+        triangleCount: indices.length / 3,
+        bbox: {
+            min: [
+                minX,
+                minY,
+                minZ_
+            ],
+            max: [
+                maxX,
+                maxY,
+                maxZ_
+            ]
+        },
+        gridWidth: W,
+        gridHeight: H
+    };
+}
 function appendBox(pos, idx, vStart, iStart, xa, xb, ylo, yhi, zlo, zhi) {
     const p = vStart * 3;
     pos[p + 0] = xa;
@@ -241,7 +334,7 @@ export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10, tabWidth
     const x1 = panel.bbox.max[0];
     const yt = panel.bbox.max[1];
     const yb = yt - baseHeightMm;
-    const zlo = -baseExtendMm;
+    const zlo = panel.bbox.min[2] - baseExtendMm;
     const zhi = panel.bbox.max[2] + baseExtendMm;
     const useTabs = tabWidthMm > 0 && tabWidthMm * 3 < x1 - x0;
     const boxCount = useTabs ? 3 : 1;
@@ -305,6 +398,23 @@ export function updateFrontZ(positions, h, borderMm, _pixelMm, minZ, maxZ) {
         for(let i = 0; i < W; i++){
             const idx = (j * W + i) * 3;
             positions[idx + 2] = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
+        }
+    }
+}
+export function updateFrontCurved(positions, h, p) {
+    const W = h.width, H = h.height;
+    const arcRad = p.arcDeg * Math.PI / 180;
+    const R = p.widthMm / arcRad;
+    const minZ = p.minThicknessMm, maxZ = p.maxThicknessMm;
+    const borderMm = p.borderMm;
+    for(let j = 0; j < H; j++){
+        for(let i = 0; i < W; i++){
+            const phi = (i / (W - 1) - 0.5) * arcRad;
+            const t = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
+            const r = R + t;
+            const idx = (j * W + i) * 3;
+            positions[idx + 0] = r * Math.sin(phi);
+            positions[idx + 2] = r * Math.cos(phi) - R;
         }
     }
 }

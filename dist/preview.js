@@ -2,14 +2,30 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 const BACKLIT_VERT = `
-  varying float vZ;
+  varying float vThickness;
+  varying float vFalloff;
+  uniform float uR;    // cylinder inner radius; 0 = flat panel
+  uniform float uYMid; // y-coordinate of panel centre in mesh space
+
   void main() {
-    vZ = position.z;
+    if (uR > 0.0) {
+      // Radial thickness from cylinder axis (x=0, z=-R in mesh space).
+      float radial = sqrt(position.x * position.x + (position.z + uR) * (position.z + uR));
+      vThickness = radial - uR;
+      // Cosine falloff: point light at (0, uYMid, -R).
+      // cos(angle from horizontal) = R / sqrt(R² + dy²)
+      float dy = position.y - uYMid;
+      vFalloff = uR / sqrt(uR * uR + dy * dy);
+    } else {
+      vThickness = position.z;
+      vFalloff = 1.0;
+    }
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 const BACKLIT_FRAG = `
-  varying float vZ;
+  varying float vThickness;
+  varying float vFalloff;
   uniform float uZMin;
   uniform float uZMax;
   uniform float uContrast;   // gamma on the brightness curve
@@ -20,8 +36,8 @@ const BACKLIT_FRAG = `
   const vec3 DARK  = vec3(0.03, 0.02, 0.01);
 
   void main() {
-    float t  = clamp((vZ - uZMin) / max(uZMax - uZMin, 0.001), 0.0, 1.0);
-    float br = clamp(pow(1.0 - t, uContrast) * uBrightness, 0.0, 1.0);
+    float t  = clamp((vThickness - uZMin) / max(uZMax - uZMin, 0.001), 0.0, 1.0);
+    float br = clamp(pow(1.0 - t, uContrast) * uBrightness * vFalloff, 0.0, 1.0);
     gl_FragColor = vec4(mix(DARK, LIGHT, br), 1.0);
   }
 `;
@@ -44,6 +60,12 @@ export class Preview {
         },
         uBrightness: {
             value: 1.0
+        },
+        uR: {
+            value: 0.0
+        },
+        uYMid: {
+            value: 0.0
         }
     };
     backlitMaterial;
@@ -200,17 +222,23 @@ export class Preview {
         this.requestRender();
     }
     _updateZUniforms(positions) {
-        const W = this.frontGridW;
-        const H = this.frontGridH;
+        const W = this.frontGridW, H = this.frontGridH;
         if (W < 2 || H < 2) return;
-        let zMin = Infinity, zMax = -Infinity;
+        const R = this.backlitUniforms.uR.value;
+        let tMin = Infinity, tMax = -Infinity;
         for(let k = 0; k < W * H; k++){
+            const x = positions[k * 3 + 0];
             const z = positions[k * 3 + 2];
-            if (z < zMin) zMin = z;
-            if (z > zMax) zMax = z;
+            const thickness = R > 0 ? Math.sqrt(x * x + (z + R) * (z + R)) - R : z;
+            if (thickness < tMin) tMin = thickness;
+            if (thickness > tMax) tMax = thickness;
         }
-        this.backlitUniforms.uZMin.value = zMin;
-        this.backlitUniforms.uZMax.value = zMax;
+        this.backlitUniforms.uZMin.value = tMin;
+        this.backlitUniforms.uZMax.value = tMax;
+    }
+    setLightCenter(R, yMid) {
+        this.backlitUniforms.uR.value = R;
+        this.backlitUniforms.uYMid.value = yMid;
     }
     applyMode(mode) {
         [

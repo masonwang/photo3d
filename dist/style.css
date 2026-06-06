@@ -312,6 +312,38 @@ html, body {
   user-select: none;
 }
 
+.shape-select {
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  color: var(--text);
+  cursor: pointer;
+  appearance: auto;
+}
+
+.customize-wrap {
+  margin-bottom: 8px;
+}
+
+.customize-btn {
+  width: 100%;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.customize-btn:hover { color: var(--text-2); }
+
+.common-params { margin-top: 0; }
+
 #depth-ai-btn {
   width: 100%;
   padding: 7px 12px;

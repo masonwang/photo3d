@@ -21,6 +21,14 @@ export type MeshParams = {
   borderMm: number;       // flat border around the heightmap at z=maxZ
 };
 
+export type CurvedMeshParams = {
+  widthMm: number;        // arc length of the curved panel
+  arcDeg: number;         // arc angle in degrees (e.g. 90 = quarter circle)
+  minThicknessMm: number;
+  maxThicknessMm: number;
+  borderMm: number;       // pixel-level clamping border width (no physical frame)
+};
+
 export type Heightmap = {
   width: number;          // grid columns
   height: number;         // grid rows
@@ -38,7 +46,7 @@ export type Mesh = {
 };
 
 /**
- * Map a luminance sample to its relief Z.
+ * Map a luminance sample to its relief thickness (Z for flat, radial for curved).
  *
  * Brightness 1.0 -> minZ; brightness 0.0 -> maxZ.
  *
@@ -294,6 +302,129 @@ export function buildMesh(h: Heightmap, p: MeshParams): Mesh {
   };
 }
 
+/**
+ * Build a curved (cylindrical arc) lithophane panel.
+ *
+ * The panel wraps around a cylinder whose axis runs along Y (height direction).
+ * The inner (back, smooth) surface is at radius R; the outer (front, relief)
+ * surface is at radius R + relief(pixel). The cylinder center is behind the
+ * panel so the center of the front face is the closest point to the viewer.
+ *
+ * Coordinate system (same convention as buildMesh):
+ *   x = chord direction (left-right)
+ *   y = height direction (bottom to top of print)
+ *   z = depth (positive toward viewer; front center at z = minThickness)
+ *
+ * Vertex layout:
+ *   [0 .. W*H-1]        front grid (outer surface, with relief)
+ *   [W*H .. 2*W*H-1]    back grid  (inner surface, smooth)
+ *   The front grid is the first W*H vertices — updateFrontCurved relies on this.
+ */
+export function buildCurvedMesh(h: Heightmap, p: CurvedMeshParams): Mesh {
+  const W = h.width, H = h.height;
+  if (W < 2 || H < 2) throw new Error('Heightmap must be at least 2x2');
+
+  const arcRad = p.arcDeg * Math.PI / 180;
+  const R = p.widthMm / arcRad;  // inner cylinder radius from arc-length formula
+  const mmPerPxH = (p.widthMm * H / W) / (H - 1);
+  const minZ = p.minThicknessMm, maxZ = p.maxThicknessMm;
+  const borderMm = Math.max(0, p.borderMm);
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  // Angle for column i: spans from -arcRad/2 to +arcRad/2
+  const colPhi = (i: number) => (i / (W - 1) - 0.5) * arcRad;
+  // y coordinate: row 0 = top of panel (high y)
+  const rowY = (j: number) => (H - 1 - j) * mmPerPxH;
+
+  // ---------- 1) Front grid (outer cylindrical surface with relief) ----------
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const phi = colPhi(i);
+      const t = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
+      const r = R + t;
+      // z = r*cos(phi) - R places center at z=t, edges recede toward viewer
+      positions.push(r * Math.sin(phi), rowY(j), r * Math.cos(phi) - R);
+    }
+  }
+  const frontIdx = (i: number, j: number) => j * W + i;
+
+  // Front surface CCW from outside (radially outward = roughly +Z at center)
+  for (let j = 0; j < H - 1; j++) {
+    for (let i = 0; i < W - 1; i++) {
+      const v00 = frontIdx(i, j), v10 = frontIdx(i + 1, j);
+      const v01 = frontIdx(i, j + 1), v11 = frontIdx(i + 1, j + 1);
+      indices.push(v00, v01, v11);
+      indices.push(v00, v11, v10);
+    }
+  }
+
+  // ---------- 2) Back grid (inner cylindrical surface, smooth) ----------
+  const backBase = W * H;
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const phi = colPhi(i);
+      positions.push(R * Math.sin(phi), rowY(j), R * Math.cos(phi) - R);
+    }
+  }
+  const backIdx = (i: number, j: number) => backBase + j * W + i;
+
+  // Back surface: reversed winding (CCW from inside = faces radially inward)
+  for (let j = 0; j < H - 1; j++) {
+    for (let i = 0; i < W - 1; i++) {
+      const v00 = backIdx(i, j), v10 = backIdx(i + 1, j);
+      const v01 = backIdx(i, j + 1), v11 = backIdx(i + 1, j + 1);
+      indices.push(v00, v11, v01);
+      indices.push(v00, v10, v11);
+    }
+  }
+
+  // ---------- 3) Top wall (j=0, +Y outward normal) ----------
+  for (let i = 0; i < W - 1; i++) {
+    indices.push(frontIdx(i, 0), frontIdx(i + 1, 0), backIdx(i + 1, 0));
+    indices.push(frontIdx(i, 0), backIdx(i + 1, 0), backIdx(i, 0));
+  }
+
+  // ---------- 4) Bottom wall (j=H-1, -Y outward normal) ----------
+  for (let i = 0; i < W - 1; i++) {
+    indices.push(frontIdx(i, H - 1), backIdx(i, H - 1), backIdx(i + 1, H - 1));
+    indices.push(frontIdx(i, H - 1), backIdx(i + 1, H - 1), frontIdx(i + 1, H - 1));
+  }
+
+  // ---------- 5) Left wall (i=0, outward tangential in -phi direction) ----------
+  for (let j = 0; j < H - 1; j++) {
+    indices.push(frontIdx(0, j), backIdx(0, j), backIdx(0, j + 1));
+    indices.push(frontIdx(0, j), backIdx(0, j + 1), frontIdx(0, j + 1));
+  }
+
+  // ---------- 6) Right wall (i=W-1, outward tangential in +phi direction) ----------
+  for (let j = 0; j < H - 1; j++) {
+    indices.push(backIdx(W - 1, j), frontIdx(W - 1, j), frontIdx(W - 1, j + 1));
+    indices.push(backIdx(W - 1, j), frontIdx(W - 1, j + 1), backIdx(W - 1, j + 1));
+  }
+
+  // ---------- Bounding box ----------
+  let minX = Infinity, minY = Infinity, minZ_ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ_ = -Infinity;
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ_) minZ_ = z; if (z > maxZ_) maxZ_ = z;
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    indices: new Uint32Array(indices),
+    vertexCount: positions.length / 3,
+    triangleCount: indices.length / 3,
+    bbox: { min: [minX, minY, minZ_], max: [maxX, maxY, maxZ_] },
+    gridWidth: W,
+    gridHeight: H,
+  };
+}
+
 // Write one watertight box (8 verts, 12 tris) into pre-allocated arrays.
 // Vertex layout matches the original base box convention (ylo < yhi).
 function appendBox(
@@ -333,7 +464,8 @@ function appendBox(
  *                   solid base. Falls back to solid if the panel is too narrow
  *                   to fit three tabs with any gap between them.
  *
- * Appends vertices after the front-grid block so updateFrontZ is unaffected.
+ * Appends vertices after the front-grid block so updateFrontZ/updateFrontCurved
+ * are unaffected.
  */
 export function addBaseMesh(
   panel: Mesh,
@@ -345,7 +477,7 @@ export function addBaseMesh(
   const x1 = panel.bbox.max[0];
   const yt = panel.bbox.max[1];
   const yb = yt - baseHeightMm;
-  const zlo = -baseExtendMm;
+  const zlo = panel.bbox.min[2] - baseExtendMm;
   const zhi = panel.bbox.max[2] + baseExtendMm;
 
   const useTabs = tabWidthMm > 0 && tabWidthMm * 3 < (x1 - x0);
@@ -393,8 +525,7 @@ export function addBaseMesh(
 }
 
 /**
- * Hot-path Z update: rewrites only the front-grid Z coordinates given a new
- * luminance buffer and thickness range. Mesh structure is untouched.
+ * Hot-path Z update for FLAT mesh: rewrites only the front-grid Z coordinates.
  */
 export function updateFrontZ(
   positions: Float32Array,
@@ -404,14 +535,39 @@ export function updateFrontZ(
   minZ: number,
   maxZ: number,
 ): void {
-  // The front grid occupies the first W*H vertices in the buffer (see buildMesh).
-  // Uses the exact same reliefZ() mapping as buildMesh so the hot path and the
-  // cold path can never disagree about geometry.
   const W = h.width, H = h.height;
   for (let j = 0; j < H; j++) {
     for (let i = 0; i < W; i++) {
       const idx = (j * W + i) * 3;
       positions[idx + 2] = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
+    }
+  }
+}
+
+/**
+ * Hot-path update for CURVED mesh: rewrites both X and Z of front-grid vertices.
+ * The front grid occupies the first W*H vertices (same layout as buildCurvedMesh).
+ */
+export function updateFrontCurved(
+  positions: Float32Array,
+  h: Heightmap,
+  p: CurvedMeshParams,
+): void {
+  const W = h.width, H = h.height;
+  const arcRad = p.arcDeg * Math.PI / 180;
+  const R = p.widthMm / arcRad;
+  const minZ = p.minThicknessMm, maxZ = p.maxThicknessMm;
+  const borderMm = p.borderMm;
+
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const phi = (i / (W - 1) - 0.5) * arcRad;
+      const t = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
+      const r = R + t;
+      const idx = (j * W + i) * 3;
+      positions[idx + 0] = r * Math.sin(phi);
+      // y (idx+1) unchanged
+      positions[idx + 2] = r * Math.cos(phi) - R;
     }
   }
 }

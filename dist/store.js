@@ -1,15 +1,17 @@
 export const defaultParams = {
-    widthMm: 30,
+    widthMm: 100,
     minThicknessMm: 0.5,
     maxThicknessMm: 2.0,
     pixelsPerMm: 10,
+    arcDeg: 90,
+    heightMm: 0,
     mirror: false,
     invert: true,
     gamma: 1.0,
     brightness: 0,
     contrast: 30,
     smoothingPx: 1,
-    borderMm: 2,
+    borderMm: 0,
     baseExtendMm: 5,
     baseHeightMm: 0.5,
     baseTabWidthMm: 1,
@@ -26,14 +28,14 @@ export const HOT_KEYS = new Set([
     'smoothingPx'
 ]);
 export const COLD_KEYS = new Set([
+    'widthMm',
+    'arcDeg',
+    'heightMm',
     'pixelsPerMm',
     'borderMm',
     'baseExtendMm',
     'baseHeightMm',
     'baseTabWidthMm'
-]);
-export const FREE_KEYS = new Set([
-    'widthMm'
 ]);
 export class ParamStore {
     state;

@@ -13,6 +13,9 @@ export type Params = {
   minThicknessMm: number;
   maxThicknessMm: number;
   pixelsPerMm: number;
+  // Shape-specific
+  arcDeg: number;
+  heightMm: number;  // 0 = auto from image aspect ratio
   // Image processing
   mirror: boolean;
   invert: boolean;
@@ -31,17 +34,19 @@ export type Params = {
 };
 
 export const defaultParams: Params = {
-  widthMm: 30,
+  widthMm: 100,
   minThicknessMm: 0.5,
   maxThicknessMm: 2.0,
   pixelsPerMm: 10,
+  arcDeg: 90,
+  heightMm: 0,
   mirror: false,
   invert: true,
   gamma: 1.0,
   brightness: 0,
   contrast: 30,
   smoothingPx: 1,
-  borderMm: 2,
+  borderMm: 0,
   baseExtendMm: 5,
   baseHeightMm: 0.5,
   baseTabWidthMm: 1,
@@ -62,16 +67,14 @@ export const HOT_KEYS = new Set<keyof Params>([
 
 // Cold-path keys: change requires rebuilding the mesh structure — debounced.
 export const COLD_KEYS = new Set<keyof Params>([
+  'widthMm',
+  'arcDeg',
+  'heightMm',
   'pixelsPerMm',
   'borderMm',
   'baseExtendMm',
   'baseHeightMm',
   'baseTabWidthMm',
-]);
-
-// Free keys: no recompute — handled as a scene-graph transform.
-export const FREE_KEYS = new Set<keyof Params>([
-  'widthMm',
 ]);
 
 type Listener = (changedKeys: ReadonlySet<keyof Params>) => void;
