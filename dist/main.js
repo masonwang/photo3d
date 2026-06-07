@@ -41,7 +41,8 @@ function updateDims() {
     const p = store.get();
     const w = lastMesh.bbox.max[0] - lastMesh.bbox.min[0];
     const h = lastMesh.bbox.max[1] - lastMesh.bbox.min[1];
-    dimsEl.textContent = `${w.toFixed(0)} × ${h.toFixed(0)} × ${p.maxThicknessMm.toFixed(1)} mm`;
+    const triCount = lastMesh.indices.length / 3;
+    dimsEl.textContent = `${w.toFixed(0)} × ${h.toFixed(0)} × ${p.maxThicknessMm.toFixed(1)} mm · ${triCount.toLocaleString()} triangles`;
     dimsEl.style.display = 'block';
 }
 function gridSize() {
