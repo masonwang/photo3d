@@ -26,9 +26,9 @@ export type Params = {
   // Border
   borderMm: number;
   // Base
-  baseExtendMm: number;  // how far the foot extends beyond the panel on each side
-  baseHeightMm: number;  // height of the base foot from the build plate
-  baseTabWidthMm: number; // 0 = solid base; >0 = three breakaway tabs of this width
+  baseExtendMm: number;  // how far the base/ribs protrude behind the back face
+  baseHeightMm: number;  // height of the horizontal base bar at the bottom
+  baseTabWidthMm: number; // width of each vertical rib (0 = no ribs)
   // Output
   asciiStl: boolean;
 };
@@ -47,9 +47,9 @@ export const defaultParams: Params = {
   contrast: 30,
   smoothingPx: 1,
   borderMm: 0,
-  baseExtendMm: 5,
-  baseHeightMm: 0.5,
-  baseTabWidthMm: 1,
+  baseExtendMm: 2,
+  baseHeightMm: 2,
+  baseTabWidthMm: 2,
   asciiStl: false,
 };
 

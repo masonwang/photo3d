@@ -55,9 +55,9 @@ export const SHAPES: Shape[] = [
       maxThicknessMm: 2.0,
       pixelsPerMm: 10,
       borderMm: 0,
-      baseExtendMm: 5,
-      baseHeightMm: 0.5,
-      baseTabWidthMm: 1,
+      baseExtendMm: 2,
+      baseHeightMm: 2,
+      baseTabWidthMm: 2,
       mirror: false,
       invert: true,
       gamma: 1.0,
@@ -98,9 +98,9 @@ const COMMON_GROUPS: ControlGroup[] = [
   {
     title: 'Base',
     controls: [
-      { kind: 'range', key: 'baseExtendMm', label: 'Extend', min: 0, max: 30, step: 0.5, format: v => `${v.toFixed(1)} mm` },
-      { kind: 'range', key: 'baseHeightMm', label: 'Height', min: 0, max: 10, step: 0.5, format: v => `${v.toFixed(1)} mm` },
-      { kind: 'range', key: 'baseTabWidthMm', label: 'Tab width', min: 0, max: 10, step: 0.5, format: v => v === 0 ? 'solid' : `${v.toFixed(1)} mm` },
+      { kind: 'range', key: 'baseExtendMm', label: 'Foot depth', min: 0, max: 30, step: 0.5, format: v => `${v.toFixed(1)} mm` },
+      { kind: 'range', key: 'baseHeightMm', label: 'Base height', min: 0, max: 30, step: 0.5, format: v => `${v.toFixed(1)} mm` },
+      { kind: 'range', key: 'baseTabWidthMm', label: 'Rib width', min: 0, max: 10, step: 0.5, format: v => v === 0 ? 'none' : `${v.toFixed(1)} mm` },
     ],
   },
   {

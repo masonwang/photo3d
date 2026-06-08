@@ -425,89 +425,126 @@ export function buildCurvedMesh(h: Heightmap, p: CurvedMeshParams): Mesh {
   };
 }
 
-// Write one watertight box (8 verts, 12 tris) into pre-allocated arrays.
-// Vertex layout matches the original base box convention (ylo < yhi).
-function appendBox(
-  pos: Float32Array, idx: Uint32Array,
-  vStart: number, iStart: number,
-  xa: number, xb: number,
-  ylo: number, yhi: number,
-  zlo: number, zhi: number,
+// Append one watertight hexahedron (8 verts, 12 tris) into number[] arrays.
+// Corners are supplied in slot order; the local frame (slot 0->2, 0->4, 0->1)
+// must be right-handed for outward winding:
+//   0:(a,lo,in) 1:(a,lo,out) 2:(b,lo,in) 3:(b,lo,out)
+//   4:(a,hi,in) 5:(a,hi,out) 6:(b,hi,in) 7:(b,hi,out)
+function appendHex(
+  pos: number[], idx: number[], base: number,
+  corners: Array<[number, number, number]>,
 ): void {
-  const p = vStart * 3;
-  pos[p+ 0]=xa; pos[p+ 1]=ylo; pos[p+ 2]=zlo;
-  pos[p+ 3]=xa; pos[p+ 4]=ylo; pos[p+ 5]=zhi;
-  pos[p+ 6]=xb; pos[p+ 7]=ylo; pos[p+ 8]=zlo;
-  pos[p+ 9]=xb; pos[p+10]=ylo; pos[p+11]=zhi;
-  pos[p+12]=xa; pos[p+13]=yhi; pos[p+14]=zlo;
-  pos[p+15]=xa; pos[p+16]=yhi; pos[p+17]=zhi;
-  pos[p+18]=xb; pos[p+19]=yhi; pos[p+20]=zlo;
-  pos[p+21]=xb; pos[p+22]=yhi; pos[p+23]=zhi;
+  for (const c of corners) pos.push(c[0], c[1], c[2]);
   const tris = [
-    4,5,6, 6,5,7,  // +Y face (yhi)
-    0,2,1, 2,3,1,  // -Y face (ylo)
-    0,4,2, 2,4,6,  // -Z face (zlo)
-    1,3,5, 3,7,5,  // +Z face (zhi)
-    0,1,4, 1,5,4,  // -X face (xa)
-    2,6,3, 6,7,3,  // +X face (xb)
+    4, 5, 6, 6, 5, 7,  // +hi face
+    0, 2, 1, 2, 3, 1,  // -lo face
+    0, 4, 2, 2, 4, 6,  // -in face
+    1, 3, 5, 3, 7, 5,  // +out face
+    0, 1, 4, 1, 5, 4,  // -a face
+    2, 6, 3, 6, 7, 3,  // +b face
   ];
-  for (let i = 0; i < 36; i++) idx[iStart + i] = vStart + tris[i];
+  for (const t of tris) idx.push(base + t);
 }
 
 /**
- * Append a stand base to an existing panel mesh so the print can stand
- * upright without tipping.
+ * Append a stability base to a curved panel mesh. All geometry follows the
+ * cylindrical back surface (outer radius R) and protrudes radially inward to
+ * radius R - baseDepthMm, so the print face stays clean and the base hugs the
+ * curve instead of chording flat across it.
  *
- * tabWidthMm = 0  → solid full-width box (default).
- * tabWidthMm > 0  → three narrow breakaway tabs (left / centre / right),
- *                   each tabWidthMm wide in X, same height and depth as the
- *                   solid base. Falls back to solid if the panel is too narrow
- *                   to fit three tabs with any gap between them.
+ * Structure (radial slabs swept along the arc):
+ *   - One horizontal base bar spanning the full arc at the bottom strip
+ *     (baseHeightMm tall), tessellated along the curve.
+ *   - Vertical ribs running the full panel height, evenly spread along the arc
+ *     with spacing never below ribMinSpacingMm (count = floor(arcLen / min)).
  *
- * Appends vertices after the front-grid block so updateFrontZ/updateFrontCurved
- * are unaffected.
+ * Each element is a union of separate watertight hexahedra (the base is not a
+ * single manifold with the panel — slicers union the overlapping solids).
+ * Appended after the front-grid block so updateFrontCurved is unaffected.
  */
 export function addBaseMesh(
   panel: Mesh,
-  baseHeightMm = 3,
-  baseExtendMm = 10,
-  tabWidthMm = 0,
+  curve: { R: number; arcRad: number },
+  baseHeightMm = 2,
+  baseDepthMm = 2,
+  ribWidthMm = 2,
+  ribMinSpacingMm = 30,
 ): Mesh {
-  const x0 = panel.bbox.min[0];
-  const x1 = panel.bbox.max[0];
+  if (baseDepthMm <= 0) return panel;
+
+  const { R, arcRad } = curve;
+  const rOut = R;                 // outer radius = panel back surface
+  const rIn = R - baseDepthMm;    // inner radius = behind the panel
+  if (rIn <= 0) return panel;
+
+  const y0 = panel.bbox.min[1];
   const yt = panel.bbox.max[1];
-  const yb = yt - baseHeightMm;
-  const zlo = panel.bbox.min[2] - baseExtendMm;
-  const zhi = panel.bbox.max[2] + baseExtendMm;
+  const halfArc = arcRad / 2;
+  const arcLen = R * arcRad;
 
-  const useTabs = tabWidthMm > 0 && tabWidthMm * 3 < (x1 - x0);
+  // Point on the cylinder at radius r, angle phi (same convention as the panel).
+  const pt = (r: number, phi: number, y: number): [number, number, number] =>
+    [r * Math.sin(phi), y, r * Math.cos(phi) - R];
 
-  const boxCount = useTabs ? 3 : 1;
-  const newVC = panel.vertexCount + 8 * boxCount;
-  const newTC = panel.triangleCount + 12 * boxCount;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  let vc = 0; // appended vertex count (local, offset to global at merge time)
+
+  // Sweep a radial slab over [phiA, phiB] x [ylo, yhi], tessellated into `seg`
+  // angular segments so it follows the curve.
+  const slab = (phiA: number, phiB: number, ylo: number, yhi: number, seg: number) => {
+    for (let s = 0; s < seg; s++) {
+      const pa = phiA + (phiB - phiA) * (s / seg);
+      const pb = phiA + (phiB - phiA) * ((s + 1) / seg);
+      appendHex(pos, idx, vc, [
+        pt(rIn, pa, ylo), pt(rOut, pa, ylo),
+        pt(rIn, pb, ylo), pt(rOut, pb, ylo),
+        pt(rIn, pa, yhi), pt(rOut, pa, yhi),
+        pt(rIn, pb, yhi), pt(rOut, pb, yhi),
+      ]);
+      vc += 8;
+    }
+  };
+
+  // Horizontal base bar: full arc, bottom strip, ~2 mm chord resolution.
+  if (baseHeightMm > 0) {
+    const baseYlo = Math.max(y0, yt - baseHeightMm);
+    const seg = Math.max(2, Math.ceil(arcLen / 2));
+    slab(-halfArc, halfArc, baseYlo, yt, seg);
+  }
+
+  // Vertical ribs: evenly spread along the arc, spacing >= ribMinSpacingMm.
+  if (ribWidthMm > 0) {
+    const gaps = Math.max(1, Math.floor(arcLen / ribMinSpacingMm));
+    const dphi = (ribWidthMm / 2) / R; // half rib width in radians
+    for (let k = 0; k <= gaps; k++) {
+      const phiC = -halfArc + (arcRad * k) / gaps;
+      const a = Math.max(-halfArc, phiC - dphi);
+      const b = Math.min(halfArc, phiC + dphi);
+      if (b > a) slab(a, b, y0, yt, 1);
+    }
+  }
+
+  if (vc === 0) return panel;
+
+  const newVC = panel.vertexCount + vc;
+  const newTC = panel.triangleCount + idx.length / 3;
   const newPos = new Float32Array(newVC * 3);
   const newIdx = new Uint32Array(newTC * 3);
   newPos.set(panel.positions);
   newIdx.set(panel.indices);
+  newPos.set(pos, panel.vertexCount * 3);
+  const iOff = panel.triangleCount * 3;
+  for (let i = 0; i < idx.length; i++) newIdx[iOff + i] = idx[i] + panel.vertexCount;
 
-  if (!useTabs) {
-    appendBox(newPos, newIdx, panel.vertexCount, panel.triangleCount * 3,
-      x0, x1, yb, yt, zlo, zhi);
-  } else {
-    const cx = (x0 + x1) / 2;
-    const hw = tabWidthMm / 2;
-    const tabs: Array<[number, number]> = [
-      [x0,        x0 + tabWidthMm],
-      [cx - hw,   cx + hw        ],
-      [x1 - tabWidthMm, x1       ],
-    ];
-    let vOff = panel.vertexCount;
-    let iOff = panel.triangleCount * 3;
-    for (const [xa, xb] of tabs) {
-      appendBox(newPos, newIdx, vOff, iOff, xa, xb, yb, yt, zlo, zhi);
-      vOff += 8;
-      iOff += 36;
-    }
+  // Expand the panel bbox by the appended base vertices.
+  let mnx = panel.bbox.min[0], mny = panel.bbox.min[1], mnz = panel.bbox.min[2];
+  let mxx = panel.bbox.max[0], mxy = panel.bbox.max[1], mxz = panel.bbox.max[2];
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+    if (x < mnx) mnx = x; if (x > mxx) mxx = x;
+    if (y < mny) mny = y; if (y > mxy) mxy = y;
+    if (z < mnz) mnz = z; if (z > mxz) mxz = z;
   }
 
   return {
@@ -515,10 +552,7 @@ export function addBaseMesh(
     indices: newIdx,
     vertexCount: newVC,
     triangleCount: newTC,
-    bbox: {
-      min: [x0, panel.bbox.min[1], zlo],
-      max: [x1, yt, zhi],
-    },
+    bbox: { min: [mnx, mny, mnz], max: [mxx, mxy, mxz] },
     gridWidth: panel.gridWidth,
     gridHeight: panel.gridHeight,
   };

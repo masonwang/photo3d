@@ -131,9 +131,10 @@ function buildAndShow(): void {
     { width: lum.width, height: lum.height, data: lum.data },
     cp,
   );
-  const mesh = addBaseMesh(panel, p.baseHeightMm, p.baseExtendMm, p.baseTabWidthMm);
+  const arcRad = cp.arcDeg * Math.PI / 180;
+  const R = cp.widthMm / arcRad;
+  const mesh = addBaseMesh(panel, { R, arcRad }, p.baseHeightMm, p.baseExtendMm, p.baseTabWidthMm);
   lastMesh = mesh;
-  const R = cp.widthMm / (cp.arcDeg * Math.PI / 180);
   const yMid = (panel.bbox.min[1] + panel.bbox.max[1]) / 2;
   preview.setLightCenter(R, yMid);
   preview.setMesh(mesh);

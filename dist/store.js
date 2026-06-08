@@ -12,9 +12,9 @@ export const defaultParams = {
     contrast: 30,
     smoothingPx: 1,
     borderMm: 0,
-    baseExtendMm: 5,
-    baseHeightMm: 0.5,
-    baseTabWidthMm: 1,
+    baseExtendMm: 2,
+    baseHeightMm: 2,
+    baseTabWidthMm: 2,
     asciiStl: false
 };
 export const HOT_KEYS = new Set([

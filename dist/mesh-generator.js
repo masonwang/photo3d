@@ -263,32 +263,8 @@ export function buildCurvedMesh(h, p) {
         gridHeight: H
     };
 }
-function appendBox(pos, idx, vStart, iStart, xa, xb, ylo, yhi, zlo, zhi) {
-    const p = vStart * 3;
-    pos[p + 0] = xa;
-    pos[p + 1] = ylo;
-    pos[p + 2] = zlo;
-    pos[p + 3] = xa;
-    pos[p + 4] = ylo;
-    pos[p + 5] = zhi;
-    pos[p + 6] = xb;
-    pos[p + 7] = ylo;
-    pos[p + 8] = zlo;
-    pos[p + 9] = xb;
-    pos[p + 10] = ylo;
-    pos[p + 11] = zhi;
-    pos[p + 12] = xa;
-    pos[p + 13] = yhi;
-    pos[p + 14] = zlo;
-    pos[p + 15] = xa;
-    pos[p + 16] = yhi;
-    pos[p + 17] = zhi;
-    pos[p + 18] = xb;
-    pos[p + 19] = yhi;
-    pos[p + 20] = zlo;
-    pos[p + 21] = xb;
-    pos[p + 22] = yhi;
-    pos[p + 23] = zhi;
+function appendHex(pos, idx, base, corners) {
+    for (const c of corners)pos.push(c[0], c[1], c[2]);
     const tris = [
         4,
         5,
@@ -327,49 +303,78 @@ function appendBox(pos, idx, vStart, iStart, xa, xb, ylo, yhi, zlo, zhi) {
         7,
         3
     ];
-    for(let i = 0; i < 36; i++)idx[iStart + i] = vStart + tris[i];
+    for (const t of tris)idx.push(base + t);
 }
-export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10, tabWidthMm = 0) {
-    const x0 = panel.bbox.min[0];
-    const x1 = panel.bbox.max[0];
+export function addBaseMesh(panel, curve, baseHeightMm = 2, baseDepthMm = 2, ribWidthMm = 2, ribMinSpacingMm = 30) {
+    if (baseDepthMm <= 0) return panel;
+    const { R, arcRad } = curve;
+    const rOut = R;
+    const rIn = R - baseDepthMm;
+    if (rIn <= 0) return panel;
+    const y0 = panel.bbox.min[1];
     const yt = panel.bbox.max[1];
-    const yb = yt - baseHeightMm;
-    const zlo = panel.bbox.min[2] - baseExtendMm;
-    const zhi = panel.bbox.max[2] + baseExtendMm;
-    const useTabs = tabWidthMm > 0 && tabWidthMm * 3 < x1 - x0;
-    const boxCount = useTabs ? 3 : 1;
-    const newVC = panel.vertexCount + 8 * boxCount;
-    const newTC = panel.triangleCount + 12 * boxCount;
+    const halfArc = arcRad / 2;
+    const arcLen = R * arcRad;
+    const pt = (r, phi, y)=>[
+            r * Math.sin(phi),
+            y,
+            r * Math.cos(phi) - R
+        ];
+    const pos = [];
+    const idx = [];
+    let vc = 0;
+    const slab = (phiA, phiB, ylo, yhi, seg)=>{
+        for(let s = 0; s < seg; s++){
+            const pa = phiA + (phiB - phiA) * (s / seg);
+            const pb = phiA + (phiB - phiA) * ((s + 1) / seg);
+            appendHex(pos, idx, vc, [
+                pt(rIn, pa, ylo),
+                pt(rOut, pa, ylo),
+                pt(rIn, pb, ylo),
+                pt(rOut, pb, ylo),
+                pt(rIn, pa, yhi),
+                pt(rOut, pa, yhi),
+                pt(rIn, pb, yhi),
+                pt(rOut, pb, yhi)
+            ]);
+            vc += 8;
+        }
+    };
+    if (baseHeightMm > 0) {
+        const baseYlo = Math.max(y0, yt - baseHeightMm);
+        const seg = Math.max(2, Math.ceil(arcLen / 2));
+        slab(-halfArc, halfArc, baseYlo, yt, seg);
+    }
+    if (ribWidthMm > 0) {
+        const gaps = Math.max(1, Math.floor(arcLen / ribMinSpacingMm));
+        const dphi = ribWidthMm / 2 / R;
+        for(let k = 0; k <= gaps; k++){
+            const phiC = -halfArc + arcRad * k / gaps;
+            const a = Math.max(-halfArc, phiC - dphi);
+            const b = Math.min(halfArc, phiC + dphi);
+            if (b > a) slab(a, b, y0, yt, 1);
+        }
+    }
+    if (vc === 0) return panel;
+    const newVC = panel.vertexCount + vc;
+    const newTC = panel.triangleCount + idx.length / 3;
     const newPos = new Float32Array(newVC * 3);
     const newIdx = new Uint32Array(newTC * 3);
     newPos.set(panel.positions);
     newIdx.set(panel.indices);
-    if (!useTabs) {
-        appendBox(newPos, newIdx, panel.vertexCount, panel.triangleCount * 3, x0, x1, yb, yt, zlo, zhi);
-    } else {
-        const cx = (x0 + x1) / 2;
-        const hw = tabWidthMm / 2;
-        const tabs = [
-            [
-                x0,
-                x0 + tabWidthMm
-            ],
-            [
-                cx - hw,
-                cx + hw
-            ],
-            [
-                x1 - tabWidthMm,
-                x1
-            ]
-        ];
-        let vOff = panel.vertexCount;
-        let iOff = panel.triangleCount * 3;
-        for (const [xa, xb] of tabs){
-            appendBox(newPos, newIdx, vOff, iOff, xa, xb, yb, yt, zlo, zhi);
-            vOff += 8;
-            iOff += 36;
-        }
+    newPos.set(pos, panel.vertexCount * 3);
+    const iOff = panel.triangleCount * 3;
+    for(let i = 0; i < idx.length; i++)newIdx[iOff + i] = idx[i] + panel.vertexCount;
+    let mnx = panel.bbox.min[0], mny = panel.bbox.min[1], mnz = panel.bbox.min[2];
+    let mxx = panel.bbox.max[0], mxy = panel.bbox.max[1], mxz = panel.bbox.max[2];
+    for(let i = 0; i < pos.length; i += 3){
+        const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+        if (x < mnx) mnx = x;
+        if (x > mxx) mxx = x;
+        if (y < mny) mny = y;
+        if (y > mxy) mxy = y;
+        if (z < mnz) mnz = z;
+        if (z > mxz) mxz = z;
     }
     return {
         positions: newPos,
@@ -378,14 +383,14 @@ export function addBaseMesh(panel, baseHeightMm = 3, baseExtendMm = 10, tabWidth
         triangleCount: newTC,
         bbox: {
             min: [
-                x0,
-                panel.bbox.min[1],
-                zlo
+                mnx,
+                mny,
+                mnz
             ],
             max: [
-                x1,
-                yt,
-                zhi
+                mxx,
+                mxy,
+                mxz
             ]
         },
         gridWidth: panel.gridWidth,
