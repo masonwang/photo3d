@@ -43,6 +43,10 @@ export type Mesh = {
   bbox: { min: [number, number, number]; max: [number, number, number] };
   gridWidth: number;       // columns of the front heightmap grid
   gridHeight: number;      // rows of the front heightmap grid
+  // Non-uniform col/row → source-image-coord mappings, set when face focus is active.
+  // colMap is also needed by updateFrontCurved for correct hot-path X positions.
+  colMap?: Float32Array;
+  rowMap?: Float32Array;
 };
 
 /**
@@ -320,23 +324,41 @@ export function buildMesh(h: Heightmap, p: MeshParams): Mesh {
  *   [W*H .. 2*W*H-1]    back grid  (inner surface, smooth)
  *   The front grid is the first W*H vertices — updateFrontCurved relies on this.
  */
-export function buildCurvedMesh(h: Heightmap, p: CurvedMeshParams): Mesh {
+export function buildCurvedMesh(
+  h: Heightmap,
+  p: CurvedMeshParams,
+  colMap?: Float32Array,
+  rowMap?: Float32Array,
+): Mesh {
   const W = h.width, H = h.height;
   if (W < 2 || H < 2) throw new Error('Heightmap must be at least 2x2');
 
   const arcRad = p.arcDeg * Math.PI / 180;
-  const R = p.widthMm / arcRad;  // inner cylinder radius from arc-length formula
+  // Full cylinder (arcDeg >= 360): W columns cover the circle with no duplicate
+  // endpoints — column W-1 is adjacent to column 0, not a repeated position.
+  const isCylinder = p.arcDeg >= 360;
+  const R = p.widthMm / arcRad;
   const mmPerPxH = (p.widthMm * H / W) / (H - 1);
+  const totalH = (H - 1) * mmPerPxH;
   const minZ = p.minThicknessMm, maxZ = p.maxThicknessMm;
   const borderMm = Math.max(0, p.borderMm);
+  // Focus maps only apply to arc panels (not full cylinders) where both maps are provided.
+  const useColMap = colMap && !isCylinder && colMap.length === W;
+  const useRowMap = rowMap && rowMap.length === H;
 
   const positions: number[] = [];
   const indices: number[] = [];
 
-  // Angle for column i: spans from -arcRad/2 to +arcRad/2
-  const colPhi = (i: number) => (i / (W - 1) - 0.5) * arcRad;
-  // y coordinate: row 0 = top of panel (high y)
-  const rowY = (j: number) => (H - 1 - j) * mmPerPxH;
+  const colPhi = useColMap
+    ? (i: number) => (colMap![i] - 0.5) * arcRad
+    : isCylinder
+      ? (i: number) => (i / W) * arcRad - arcRad / 2
+      : (i: number) => (i / (W - 1) - 0.5) * arcRad;
+  const rowY = useRowMap
+    ? (j: number) => (1 - rowMap![j]) * totalH
+    : (j: number) => (H - 1 - j) * mmPerPxH;
+  const nCols = isCylinder ? W : W - 1;                   // segments per row
+  const nextI = isCylinder ? (i: number) => (i + 1) % W : (i: number) => i + 1;
 
   // ---------- 1) Front grid (outer cylindrical surface with relief) ----------
   for (let j = 0; j < H; j++) {
@@ -344,17 +366,15 @@ export function buildCurvedMesh(h: Heightmap, p: CurvedMeshParams): Mesh {
       const phi = colPhi(i);
       const t = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
       const r = R + t;
-      // z = r*cos(phi) - R places center at z=t, edges recede toward viewer
       positions.push(r * Math.sin(phi), rowY(j), r * Math.cos(phi) - R);
     }
   }
   const frontIdx = (i: number, j: number) => j * W + i;
 
-  // Front surface CCW from outside (radially outward = roughly +Z at center)
   for (let j = 0; j < H - 1; j++) {
-    for (let i = 0; i < W - 1; i++) {
-      const v00 = frontIdx(i, j), v10 = frontIdx(i + 1, j);
-      const v01 = frontIdx(i, j + 1), v11 = frontIdx(i + 1, j + 1);
+    for (let i = 0; i < nCols; i++) {
+      const v00 = frontIdx(i, j),       v10 = frontIdx(nextI(i), j);
+      const v01 = frontIdx(i, j + 1),   v11 = frontIdx(nextI(i), j + 1);
       indices.push(v00, v01, v11);
       indices.push(v00, v11, v10);
     }
@@ -370,38 +390,40 @@ export function buildCurvedMesh(h: Heightmap, p: CurvedMeshParams): Mesh {
   }
   const backIdx = (i: number, j: number) => backBase + j * W + i;
 
-  // Back surface: reversed winding (CCW from inside = faces radially inward)
   for (let j = 0; j < H - 1; j++) {
-    for (let i = 0; i < W - 1; i++) {
-      const v00 = backIdx(i, j), v10 = backIdx(i + 1, j);
-      const v01 = backIdx(i, j + 1), v11 = backIdx(i + 1, j + 1);
+    for (let i = 0; i < nCols; i++) {
+      const v00 = backIdx(i, j),       v10 = backIdx(nextI(i), j);
+      const v01 = backIdx(i, j + 1),   v11 = backIdx(nextI(i), j + 1);
       indices.push(v00, v11, v01);
       indices.push(v00, v10, v11);
     }
   }
 
   // ---------- 3) Top wall (j=0, +Y outward normal) ----------
-  for (let i = 0; i < W - 1; i++) {
-    indices.push(frontIdx(i, 0), frontIdx(i + 1, 0), backIdx(i + 1, 0));
-    indices.push(frontIdx(i, 0), backIdx(i + 1, 0), backIdx(i, 0));
+  for (let i = 0; i < nCols; i++) {
+    indices.push(frontIdx(i, 0), frontIdx(nextI(i), 0), backIdx(nextI(i), 0));
+    indices.push(frontIdx(i, 0), backIdx(nextI(i), 0), backIdx(i, 0));
   }
 
   // ---------- 4) Bottom wall (j=H-1, -Y outward normal) ----------
-  for (let i = 0; i < W - 1; i++) {
-    indices.push(frontIdx(i, H - 1), backIdx(i, H - 1), backIdx(i + 1, H - 1));
-    indices.push(frontIdx(i, H - 1), backIdx(i + 1, H - 1), frontIdx(i + 1, H - 1));
+  for (let i = 0; i < nCols; i++) {
+    indices.push(frontIdx(i, H - 1), backIdx(i, H - 1), backIdx(nextI(i), H - 1));
+    indices.push(frontIdx(i, H - 1), backIdx(nextI(i), H - 1), frontIdx(nextI(i), H - 1));
   }
 
-  // ---------- 5) Left wall (i=0, outward tangential in -phi direction) ----------
-  for (let j = 0; j < H - 1; j++) {
-    indices.push(frontIdx(0, j), backIdx(0, j), backIdx(0, j + 1));
-    indices.push(frontIdx(0, j), backIdx(0, j + 1), frontIdx(0, j + 1));
-  }
+  // Side walls only for arc panels; a full cylinder closes without them.
+  if (!isCylinder) {
+    // ---------- 5) Left wall (i=0, outward tangential in -phi direction) ----------
+    for (let j = 0; j < H - 1; j++) {
+      indices.push(frontIdx(0, j), backIdx(0, j), backIdx(0, j + 1));
+      indices.push(frontIdx(0, j), backIdx(0, j + 1), frontIdx(0, j + 1));
+    }
 
-  // ---------- 6) Right wall (i=W-1, outward tangential in +phi direction) ----------
-  for (let j = 0; j < H - 1; j++) {
-    indices.push(backIdx(W - 1, j), frontIdx(W - 1, j), frontIdx(W - 1, j + 1));
-    indices.push(backIdx(W - 1, j), frontIdx(W - 1, j + 1), backIdx(W - 1, j + 1));
+    // ---------- 6) Right wall (i=W-1, outward tangential in +phi direction) ----------
+    for (let j = 0; j < H - 1; j++) {
+      indices.push(backIdx(W - 1, j), frontIdx(W - 1, j), frontIdx(W - 1, j + 1));
+      indices.push(backIdx(W - 1, j), frontIdx(W - 1, j + 1), backIdx(W - 1, j + 1));
+    }
   }
 
   // ---------- Bounding box ----------
@@ -422,6 +444,8 @@ export function buildCurvedMesh(h: Heightmap, p: CurvedMeshParams): Mesh {
     bbox: { min: [minX, minY, minZ_], max: [maxX, maxY, maxZ_] },
     gridWidth: W,
     gridHeight: H,
+    colMap: useColMap ? colMap : undefined,
+    rowMap: useRowMap ? rowMap : undefined,
   };
 }
 
@@ -506,22 +530,29 @@ export function addBaseMesh(
     }
   };
 
-  // Horizontal base bar: full arc, bottom strip, ~2 mm chord resolution.
-  if (baseHeightMm > 0) {
-    const baseYlo = Math.max(y0, yt - baseHeightMm);
-    const seg = Math.max(2, Math.ceil(arcLen / 2));
-    slab(-halfArc, halfArc, baseYlo, yt, seg);
-  }
-
-  // Vertical ribs: evenly spread along the arc, spacing >= ribMinSpacingMm.
-  if (ribWidthMm > 0) {
-    const gaps = Math.max(1, Math.floor(arcLen / ribMinSpacingMm));
-    const dphi = (ribWidthMm / 2) / R; // half rib width in radians
-    for (let k = 0; k <= gaps; k++) {
-      const phiC = -halfArc + (arcRad * k) / gaps;
-      const a = Math.max(-halfArc, phiC - dphi);
-      const b = Math.min(halfArc, phiC + dphi);
-      if (b > a) slab(a, b, y0, yt, 1);
+  if (arcRad >= 2 * Math.PI - 0.01) {
+    // Lamp (full cylinder): annular rings at physical bottom AND top, no ribs.
+    if (baseHeightMm > 0) {
+      const N = Math.max(8, Math.ceil(arcLen / 2));
+      slab(-Math.PI, Math.PI, Math.max(y0, yt - baseHeightMm), yt, N);
+      slab(-Math.PI, Math.PI, y0, Math.min(yt, y0 + baseHeightMm), N);
+    }
+  } else {
+    // Curved arc panel: base bar at bottom + vertical ribs.
+    if (baseHeightMm > 0) {
+      const baseYlo = Math.max(y0, yt - baseHeightMm);
+      const seg = Math.max(2, Math.ceil(arcLen / 2));
+      slab(-halfArc, halfArc, baseYlo, yt, seg);
+    }
+    if (ribWidthMm > 0) {
+      const gaps = Math.max(1, Math.floor(arcLen / ribMinSpacingMm));
+      const dphi = (ribWidthMm / 2) / R;
+      for (let k = 0; k <= gaps; k++) {
+        const phiC = -halfArc + (arcRad * k) / gaps;
+        const a = Math.max(-halfArc, phiC - dphi);
+        const b = Math.min(halfArc, phiC + dphi);
+        if (b > a) slab(a, b, y0, yt, 1);
+      }
     }
   }
 
@@ -586,21 +617,28 @@ export function updateFrontCurved(
   positions: Float32Array,
   h: Heightmap,
   p: CurvedMeshParams,
+  colMap?: Float32Array,
 ): void {
   const W = h.width, H = h.height;
   const arcRad = p.arcDeg * Math.PI / 180;
   const R = p.widthMm / arcRad;
   const minZ = p.minThicknessMm, maxZ = p.maxThicknessMm;
   const borderMm = p.borderMm;
+  const isCylinder = p.arcDeg >= 360;
+  const useColMap = colMap && !isCylinder && colMap.length === W;
 
   for (let j = 0; j < H; j++) {
     for (let i = 0; i < W; i++) {
-      const phi = (i / (W - 1) - 0.5) * arcRad;
+      const phi = useColMap
+        ? (colMap![i] - 0.5) * arcRad
+        : isCylinder
+          ? (i / W) * arcRad - arcRad / 2
+          : (i / (W - 1) - 0.5) * arcRad;
       const t = reliefZ(h.data[j * W + i], i, j, W, H, borderMm, minZ, maxZ);
       const r = R + t;
       const idx = (j * W + i) * 3;
       positions[idx + 0] = r * Math.sin(phi);
-      // y (idx+1) unchanged
+      // y (idx+1) unchanged — rowMap only affects the cold build, not hot updates
       positions[idx + 2] = r * Math.cos(phi) - R;
     }
   }

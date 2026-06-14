@@ -213,6 +213,110 @@ export function rgbaToLuminance(src: Rgba, p: Params): Luminance {
   return applyImageParams(grey, W, H, p);
 }
 
+/**
+ * Non-uniform grid mapping: maps each of the n grid indices [0..n-1] to a
+ * source image coordinate [0..1], allocating `density` times as many cells
+ * per unit source width inside [faceMin, faceMax] as outside it.
+ * Falls back to uniform spacing when faceMin >= faceMax or density <= 1.
+ */
+export function computeFocusMap(
+  n: number,
+  faceMin: number,
+  faceMax: number,
+  density = 4,
+): Float32Array {
+  const map = new Float32Array(n);
+  if (n <= 1) { if (n === 1) map[0] = 0.5; return map; }
+  const fa = Math.max(0, Math.min(1, faceMin));
+  const fb = Math.max(0, Math.min(1, faceMax));
+  if (fa >= fb || density <= 1) {
+    for (let i = 0; i < n; i++) map[i] = i / (n - 1);
+    return map;
+  }
+  const d = density;
+  const totalW = 1 + (fb - fa) * (d - 1);
+  const cwFaceStart = fa / totalW;
+  const cwFaceEnd = (fa + (fb - fa) * d) / totalW;
+  for (let i = 0; i < n; i++) {
+    const g = i / (n - 1);
+    let u: number;
+    if (g <= cwFaceStart) {
+      u = g * totalW;
+    } else if (g <= cwFaceEnd) {
+      u = fa + (g - cwFaceStart) * totalW / d;
+    } else {
+      u = fb + (g - cwFaceEnd) * totalW;
+    }
+    map[i] = Math.max(0, Math.min(1, u));
+  }
+  return map;
+}
+
+/** Resample RGBA at non-uniform positions given by colMap/rowMap (bilinear). */
+export function resampleRgbaFocused(
+  src: Rgba,
+  gridW: number,
+  gridH: number,
+  colMap: Float32Array,
+  rowMap: Float32Array,
+): Rgba {
+  const out = new Uint8ClampedArray(gridW * gridH * 4);
+  for (let j = 0; j < gridH; j++) {
+    const fy = rowMap[j] * (src.height - 1);
+    const y0 = Math.max(0, Math.floor(fy));
+    const y1 = Math.min(src.height - 1, y0 + 1);
+    const dy = fy - y0;
+    for (let i = 0; i < gridW; i++) {
+      const fx = colMap[i] * (src.width - 1);
+      const x0 = Math.max(0, Math.floor(fx));
+      const x1 = Math.min(src.width - 1, x0 + 1);
+      const dx = fx - x0;
+      const di = (j * gridW + i) * 4;
+      for (let c = 0; c < 4; c++) {
+        const v00 = src.data[(y0 * src.width + x0) * 4 + c];
+        const v10 = src.data[(y0 * src.width + x1) * 4 + c];
+        const v01 = src.data[(y1 * src.width + x0) * 4 + c];
+        const v11 = src.data[(y1 * src.width + x1) * 4 + c];
+        out[di + c] = Math.round(
+          v00 * (1 - dx) * (1 - dy) + v10 * dx * (1 - dy) +
+          v01 * (1 - dx) * dy       + v11 * dx * dy,
+        );
+      }
+    }
+  }
+  return { width: gridW, height: gridH, data: out };
+}
+
+/** Resample a Float32Array (depth map) at non-uniform positions (bilinear). */
+export function resampleFloat32Focused(
+  src: Float32Array,
+  srcW: number,
+  srcH: number,
+  colMap: Float32Array,
+  rowMap: Float32Array,
+): Float32Array {
+  const gridW = colMap.length, gridH = rowMap.length;
+  const out = new Float32Array(gridW * gridH);
+  for (let j = 0; j < gridH; j++) {
+    const fy = rowMap[j] * (srcH - 1);
+    const y0 = Math.max(0, Math.floor(fy));
+    const y1 = Math.min(srcH - 1, y0 + 1);
+    const dy = fy - y0;
+    for (let i = 0; i < gridW; i++) {
+      const fx = colMap[i] * (srcW - 1);
+      const x0 = Math.max(0, Math.floor(fx));
+      const x1 = Math.min(srcW - 1, x0 + 1);
+      const dx = fx - x0;
+      const v00 = src[y0 * srcW + x0], v10 = src[y0 * srcW + x1];
+      const v01 = src[y1 * srcW + x0], v11 = src[y1 * srcW + x1];
+      out[j * gridW + i] =
+        v00 * (1 - dx) * (1 - dy) + v10 * dx * (1 - dy) +
+        v01 * (1 - dx) * dy       + v11 * dx * dy;
+    }
+  }
+  return out;
+}
+
 function clamp01(v: number) {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }

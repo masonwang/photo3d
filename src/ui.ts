@@ -14,6 +14,8 @@ type RangeSpec = {
   max: number;
   step: number;
   format?: (v: number) => string;
+  toDisplay?: (storeVal: number) => number;
+  toStore?: (displayVal: number) => number;
 };
 
 type ToggleSpec = {
@@ -53,11 +55,43 @@ export const SHAPES: Shape[] = [
       heightMm: 0,
       minThicknessMm: 0.5,
       maxThicknessMm: 2.0,
-      pixelsPerMm: 10,
+      pixelsPerMm: 4,
       borderMm: 0,
       baseExtendMm: 2,
       baseHeightMm: 2,
       baseTabWidthMm: 2,
+      mirror: false,
+      invert: true,
+      gamma: 1.0,
+      brightness: 0,
+      contrast: 30,
+      smoothingPx: 1,
+      asciiStl: false,
+    },
+  },
+  {
+    id: 'lamp',
+    name: 'Lamp',
+    shapeGroups: [
+      {
+        title: 'Geometry',
+        controls: [
+          { kind: 'range', key: 'widthMm', label: 'Diameter', min: 20, max: 300, step: 5, format: v => `${v.toFixed(0)} mm`, toDisplay: (s: number) => Math.round(s / Math.PI), toStore: (d: number) => d * Math.PI },
+          { kind: 'range', key: 'heightMm', label: 'Height', min: 0, max: 300, step: 1, format: v => v === 0 ? 'auto' : `${v.toFixed(0)} mm` },
+        ],
+      },
+    ],
+    defaults: {
+      widthMm: 100 * Math.PI,
+      arcDeg: 360,
+      heightMm: 0,
+      minThicknessMm: 0.5,
+      maxThicknessMm: 2.0,
+      pixelsPerMm: 4,
+      borderMm: 0,
+      baseExtendMm: 2,
+      baseHeightMm: 2,
+      baseTabWidthMm: 0,
       mirror: false,
       invert: true,
       gamma: 1.0,
@@ -75,7 +109,7 @@ const COMMON_GROUPS: ControlGroup[] = [
     controls: [
       { kind: 'range', key: 'minThicknessMm', label: 'Min thickness', min: 0.4, max: 1.5, step: 0.05, format: v => `${v.toFixed(2)} mm` },
       { kind: 'range', key: 'maxThicknessMm', label: 'Max thickness', min: 1.5, max: 4.5, step: 0.05, format: v => `${v.toFixed(2)} mm` },
-      { kind: 'range', key: 'pixelsPerMm', label: 'Resolution', min: 4, max: 14, step: 1, format: v => `${v.toFixed(0)} px/mm` },
+      { kind: 'range', key: 'pixelsPerMm', label: 'Resolution', min: 3, max: 20, step: 1, format: v => `${v.toFixed(0)} px/mm` },
     ],
   },
   {
@@ -122,6 +156,7 @@ export function mountControls(
   const inputEls = new Map<string, HTMLInputElement>();
   const valueEls = new Map<string, HTMLElement>();
   const formatFns = new Map<string, ((v: number) => string) | undefined>();
+  const displayFns = new Map<string, ((v: number) => number) | undefined>();
   let shapeKeys = new Set<string>();
   let currentShape = SHAPES[0];
 
@@ -143,19 +178,23 @@ export function mountControls(
       input.max = String(c.max);
       input.step = String(c.step);
       const cur = store.get()[c.key] as number;
-      input.value = String(cur);
+      const toDisplay = c.toDisplay ?? ((v: number) => v);
+      const toStore = c.toStore ?? ((v: number) => v);
+      const displayCur = toDisplay(cur);
+      input.value = String(displayCur);
       const valEl = document.createElement('span');
       valEl.className = 'value';
-      valEl.textContent = c.format ? c.format(cur) : String(cur);
+      valEl.textContent = c.format ? c.format(displayCur) : String(displayCur);
       input.addEventListener('input', () => {
         const v = Number(input.value);
-        store.set(c.key, v as any);
+        store.set(c.key, toStore(v) as any);
         valEl.textContent = c.format ? c.format(v) : String(v);
       });
       row.appendChild(input);
       row.appendChild(valEl);
       valueEls.set(c.key, valEl);
       formatFns.set(c.key, c.format);
+      displayFns.set(c.key, c.toDisplay);
     } else {
       const input = document.createElement('input');
       input.type = 'checkbox';
@@ -187,11 +226,13 @@ export function mountControls(
       if (el.type === 'checkbox') {
         el.checked = Boolean(v);
       } else {
-        el.value = String(v);
+        const displayFn = displayFns.get(k);
+        const displayVal = displayFn ? displayFn(v as number) : (v as number);
+        el.value = String(displayVal);
         const valEl = valueEls.get(k);
         if (valEl) {
           const fmt = formatFns.get(k);
-          valEl.textContent = fmt ? fmt(v as number) : String(v);
+          valEl.textContent = fmt ? fmt(displayVal) : String(displayVal);
         }
       }
     }
@@ -227,6 +268,7 @@ export function mountControls(
       inputEls.delete(k);
       valueEls.delete(k);
       formatFns.delete(k);
+      displayFns.delete(k);
     }
     shapeKeys = new Set();
     shapeParamsHost.innerHTML = '';

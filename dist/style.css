@@ -439,6 +439,25 @@ html, body {
   align-items: center;
 }
 
+.crop-face-btn {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #d97706;
+  background: white;
+  color: #92400e;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.crop-face-btn:hover:not(:disabled) { background: #fffbeb; }
+.crop-face-btn--ready {
+  opacity: 1;
+  background: #fffbeb;
+  color: #92400e;
+}
+.crop-face-btn:disabled { cursor: default; }
+
 @media (max-width: 700px) {
   .app-main {
     grid-template-columns: 1fr;

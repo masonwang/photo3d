@@ -77,7 +77,9 @@ export class Preview {
     mesh = null;
     geometry = null;
     litLights = [];
+    litBackLights = [];
     backlitLights = [];
+    isLamp = false;
     mode = 'lit';
     renderRequested = false;
     resizeObserver;
@@ -117,6 +119,14 @@ export class Preview {
             key,
             fill,
             amb
+        ];
+        const keyBack = new THREE.DirectionalLight(0xffffff, 1.6);
+        keyBack.position.set(-120, 200, -200);
+        const fillBack = new THREE.DirectionalLight(0xffffff, 0.4);
+        fillBack.position.set(150, 60, -100);
+        this.litBackLights = [
+            keyBack,
+            fillBack
         ];
         const ambBack = new THREE.AmbientLight(0xffeedd, 0.02);
         this.backlitLights = [
@@ -240,13 +250,20 @@ export class Preview {
         this.backlitUniforms.uR.value = R;
         this.backlitUniforms.uYMid.value = yMid;
     }
+    setIsLamp(v) {
+        this.isLamp = v;
+        this.applyMode(this.mode);
+        this.requestRender();
+    }
     applyMode(mode) {
         [
             ...this.litLights,
+            ...this.litBackLights,
             ...this.backlitLights
         ].forEach((l)=>this.scene.remove(l));
         if (mode === 'lit' || mode === 'wireframe') {
             this.litLights.forEach((l)=>this.scene.add(l));
+            if (this.isLamp) this.litBackLights.forEach((l)=>this.scene.add(l));
             this.scene.background = new THREE.Color(0xefeee9);
         } else if (mode === 'backlit') {
             this.backlitLights.forEach((l)=>this.scene.add(l));

@@ -38,6 +38,22 @@ The primary build is **zero-dependency**. `build.mjs` transpiles TypeScript with
 
 ## Architecture
 
+### Photo → lithophane end-to-end flow
+
+When the user opens a photo file, `main.ts` orchestrates these steps in order:
+
+1. **Decode** — `decodeImageToRgba(file)` draws the image into an offscreen `<canvas>` and reads back raw RGBA pixels into an `Rgba` object (width, height, Uint8ClampedArray). The original decoded result is saved as `originalRgba` / `originalBlob` and never mutated.
+2. **Crop** (`crop.ts`) — `showCropModal()` is called immediately after decode. The user can drag-select a region on a canvas preview or click "Use Full Image." On confirm, `cropRgba()` copies the selected pixel rect into a new `Rgba` and re-encodes it as a PNG `Blob`; both become the active `sourceRgba` / `sourceBlob`. On skip, the originals pass through unchanged. The "Crop" toolbar button calls `openCropModal()` again at any time to re-crop from the original (not the already-cropped image).
+3. **Depth estimation** *(optional, AI path)* — if AI Depth is enabled, `estimateDepth(sourceBlob)` is awaited; the result is cached as `lastRawDepth`. Failure silently falls back to the photo path.
+4. **Luminance derivation** — `deriveLuminance(gridW, gridH)` in `main.ts` picks either the AI or photo path:
+   - *AI path*: bilinear-resample `lastRawDepth` to the grid size, optionally blend with greyscale photo (`depthBlend` slider), then pass through `applyImageParams`.
+   - *Photo path*: nearest-neighbor resample `sourceRgba` to the grid size, then `rgbaToLuminance` (Rec.709 greyscale + `applyImageParams`).
+5. **Mesh build** — `buildCurvedMesh(lum, params)` + `addBaseMesh(...)` produce the watertight triangle mesh (see Five-stage pipeline below).
+6. **Preview** — `preview.setMesh(mesh)` hands the geometry to Three.js for display.
+7. **Export** — on "Download STL", `meshToBinaryStl(lastMesh)` applies the vertical-orientation transform and writes a binary STL file; the browser triggers a download.
+
+Parameter changes after load are routed through the hot/cold paths (see below) without re-running steps 1–3.
+
 ### Five-stage pipeline
 
 `source image → [depth-estimator | image-processor] → mesh-generator → stl-writer`, orchestrated by `main.ts`:

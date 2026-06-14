@@ -85,13 +85,16 @@ export function showCropModal(
   imgCanvas.width = sourceRgba.width;
   imgCanvas.height = sourceRgba.height;
   imgCanvas.getContext('2d')!.putImageData(
-    new ImageData(sourceRgba.data, sourceRgba.width, sourceRgba.height), 0, 0,
+    new ImageData(sourceRgba.data as unknown as Uint8ClampedArray<ArrayBuffer>, sourceRgba.width, sourceRgba.height), 0, 0,
   );
 
   const ctx = canvas.getContext('2d')!;
   let cropRect: Rect | null = null;
   let dragging = false;
   let startX = 0, startY = 0;
+
+  const scaleX = () => canvasW / sourceRgba.width;
+  const scaleY = () => canvasH / sourceRgba.height;
 
   function normalizeRect(r: Rect): Rect {
     let x = r.w >= 0 ? r.x : r.x + r.w;
@@ -108,6 +111,7 @@ export function showCropModal(
   function draw(): void {
     ctx.clearRect(0, 0, canvasW, canvasH);
     ctx.drawImage(imgCanvas, 0, 0, canvasW, canvasH);
+
     if (!cropRect || Math.abs(cropRect.w) < 2 || Math.abs(cropRect.h) < 2) return;
     const nr = normalizeRect(cropRect);
 
@@ -216,19 +220,19 @@ export function showCropModal(
   applyBtn.addEventListener('click', async () => {
     if (!cropRect) return;
     const nr = normalizeRect(cropRect);
-    const scaleX = sourceRgba.width / canvasW;
-    const scaleY = sourceRgba.height / canvasH;
-    const ix = Math.round(nr.x * scaleX);
-    const iy = Math.round(nr.y * scaleY);
-    const iw = Math.max(1, Math.round(nr.w * scaleX));
-    const ih = Math.max(1, Math.round(nr.h * scaleY));
+    const sx = scaleX();
+    const sy = scaleY();
+    const ix = Math.round(nr.x / sx);
+    const iy = Math.round(nr.y / sy);
+    const iw = Math.max(1, Math.round(nr.w / sx));
+    const ih = Math.max(1, Math.round(nr.h / sy));
 
     const croppedRgba = cropRgba(sourceRgba, ix, iy, iw, ih);
 
     const tmpCanvas = document.createElement('canvas');
     tmpCanvas.width = iw;
     tmpCanvas.height = ih;
-    tmpCanvas.getContext('2d')!.putImageData(new ImageData(croppedRgba.data, iw, ih), 0, 0);
+    tmpCanvas.getContext('2d')!.putImageData(new ImageData(croppedRgba.data as unknown as Uint8ClampedArray<ArrayBuffer>, iw, ih), 0, 0);
     const blob = await new Promise<Blob>((res) =>
       tmpCanvas.toBlob(b => res(b!), 'image/png'),
     );

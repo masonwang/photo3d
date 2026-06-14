@@ -8,10 +8,13 @@ import type { Params } from './store';
 import {
   decodeImageToRgba,
   resampleRgba,
+  resampleRgbaFocused,
   rgbaToLuminance,
   rgbaToGrey,
   resampleFloat32Bilinear,
+  resampleFloat32Focused,
   applyImageParams,
+  computeFocusMap,
   type Rgba,
   type Luminance,
 } from './image-processor';
@@ -22,6 +25,7 @@ import type { RenderMode, ViewPreset } from './preview';
 import { mountControls, showStatus } from './ui';
 import { estimateDepth } from './depth-estimator';
 import { showCropModal } from './crop';
+import { detectFaceRegions } from './face-detector';
 
 const store = new ParamStore();
 const controlsHost = document.getElementById('controls') as HTMLElement;
@@ -48,6 +52,8 @@ let originalBlob: Blob | null = null;
 let lastLum: Luminance | null = null;
 let lastMesh: Mesh | null = null;
 let lastRawDepth: Luminance | null = null; // cached AI depth at model resolution
+type NormalizedRegion = { x: number; y: number; w: number; h: number };
+let lastFaceRegions: NormalizedRegion[] = []; // detected faces in [0,1] of active source
 let useDepthAI = true;
 // 0 = pure photo luminance, 1 = pure AI depth; blends the two for portraits
 let depthBlend = 0.7;
@@ -65,7 +71,12 @@ function updateDims(): void {
   const w = lastMesh.bbox.max[0] - lastMesh.bbox.min[0];
   const h = lastMesh.bbox.max[1] - lastMesh.bbox.min[1];
   const triCount = lastMesh.indices.length / 3;
-  dimsEl.textContent = `${w.toFixed(0)} × ${h.toFixed(0)} × ${p.maxThicknessMm.toFixed(1)} mm · ${triCount.toLocaleString()} triangles`;
+  let text = `${w.toFixed(0)} × ${h.toFixed(0)} × ${p.maxThicknessMm.toFixed(1)} mm · ${triCount.toLocaleString()} triangles`;
+  if (lastFaceRegions.length > 0) {
+    const faceRes = p.pixelsPerMm * 5;
+    text += ` · face: ${faceRes.toFixed(0)} px/mm`;
+  }
+  dimsEl.textContent = text;
   dimsEl.style.display = 'block';
 }
 
@@ -85,28 +96,47 @@ function gridSize(): { gridW: number; gridH: number } {
   return { gridW, gridH };
 }
 
+type FocusMaps = { colMap: Float32Array; rowMap: Float32Array };
+
+/** Build non-uniform col/row sampling maps from stored face regions, or null if none. */
+function buildFocusMaps(gridW: number, gridH: number): FocusMaps | null {
+  if (lastFaceRegions.length === 0) return null;
+  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+  for (const r of lastFaceRegions) {
+    if (r.x < minX) minX = r.x;
+    if (r.y < minY) minY = r.y;
+    if (r.x + r.w > maxX) maxX = r.x + r.w;
+    if (r.y + r.h > maxY) maxY = r.y + r.h;
+  }
+  if (maxX <= minX || maxY <= minY) return null;
+  return {
+    colMap: computeFocusMap(gridW, minX, maxX, 5),
+    rowMap: computeFocusMap(gridH, minY, maxY, 5),
+  };
+}
+
 /** Compute luminance buffer from whichever source is active (photo or AI depth). */
-function deriveLuminance(gridW: number, gridH: number): Luminance {
+function deriveLuminance(gridW: number, gridH: number, focus: FocusMaps | null): Luminance {
   const p = store.get();
   if (useDepthAI && lastRawDepth) {
-    const depth = resampleFloat32Bilinear(
-      lastRawDepth.data,
-      lastRawDepth.width,
-      lastRawDepth.height,
-      gridW,
-      gridH,
-    );
+    const depth = focus
+      ? resampleFloat32Focused(lastRawDepth.data, lastRawDepth.width, lastRawDepth.height, focus.colMap, focus.rowMap)
+      : resampleFloat32Bilinear(lastRawDepth.data, lastRawDepth.width, lastRawDepth.height, gridW, gridH);
     if (depthBlend >= 1) {
       return applyImageParams(depth, gridW, gridH, p);
     }
-    const photo = rgbaToGrey(resampleRgba(sourceRgba!, gridW, gridH));
+    const photo = rgbaToGrey(focus
+      ? resampleRgbaFocused(sourceRgba!, gridW, gridH, focus.colMap, focus.rowMap)
+      : resampleRgba(sourceRgba!, gridW, gridH));
     const mixed = new Float32Array(gridW * gridH);
     for (let i = 0; i < mixed.length; i++) {
       mixed[i] = depthBlend * depth[i] + (1 - depthBlend) * photo[i];
     }
     return applyImageParams(mixed, gridW, gridH, p);
   }
-  const resampled = resampleRgba(sourceRgba!, gridW, gridH);
+  const resampled = focus
+    ? resampleRgbaFocused(sourceRgba!, gridW, gridH, focus.colMap, focus.rowMap)
+    : resampleRgba(sourceRgba!, gridW, gridH);
   return rgbaToLuminance(resampled, p);
 }
 
@@ -124,12 +154,15 @@ function buildAndShow(): void {
   if (!sourceRgba) return;
   const p = store.get();
   const { gridW, gridH } = gridSize();
-  const lum = deriveLuminance(gridW, gridH);
+  const focus = buildFocusMaps(gridW, gridH);
+  const lum = deriveLuminance(gridW, gridH, focus);
   lastLum = lum;
   const cp = curvedParams(p);
   const panel = buildCurvedMesh(
     { width: lum.width, height: lum.height, data: lum.data },
     cp,
+    focus?.colMap,
+    focus?.rowMap,
   );
   const arcRad = cp.arcDeg * Math.PI / 180;
   const R = cp.widthMm / arcRad;
@@ -137,6 +170,7 @@ function buildAndShow(): void {
   lastMesh = mesh;
   const yMid = (panel.bbox.min[1] + panel.bbox.max[1]) / 2;
   preview.setLightCenter(R, yMid);
+  preview.setIsLamp(cp.arcDeg >= 360);
   preview.setMesh(mesh);
   emptyMsg.style.display = 'none';
   downloadBtn.disabled = false;
@@ -147,12 +181,14 @@ function hotZUpdate(): void {
   if (!sourceRgba || !lastMesh || !lastLum) return;
   const p = store.get();
   const { gridW, gridH } = gridSize();
-  const lum = deriveLuminance(gridW, gridH);
+  const focus = buildFocusMaps(gridW, gridH);
+  const lum = deriveLuminance(gridW, gridH, focus);
   lastLum = lum;
   updateFrontCurved(
     lastMesh.positions,
     { width: lum.width, height: lum.height, data: lum.data },
     curvedParams(p),
+    lastMesh.colMap,
   );
   preview.notifyZUpdated();
   updateDims();
@@ -179,10 +215,32 @@ store.subscribe(COLD_KEYS, () => {
   scheduleColdRebuild();
 });
 
+async function runFaceDetection(): Promise<void> {
+  if (!sourceRgba) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = sourceRgba.width;
+  canvas.height = sourceRgba.height;
+  canvas.getContext('2d')!.putImageData(
+    new ImageData(sourceRgba.data as unknown as Uint8ClampedArray<ArrayBuffer>, sourceRgba.width, sourceRgba.height), 0, 0,
+  );
+  try {
+    const regions = await detectFaceRegions(canvas, (msg) => showStatus(statusPill, msg, 0));
+    lastFaceRegions = regions.map(r => ({
+      x: r.x / sourceRgba!.width,
+      y: r.y / sourceRgba!.height,
+      w: r.width / sourceRgba!.width,
+      h: r.height / sourceRgba!.height,
+    }));
+  } catch {
+    lastFaceRegions = [];
+  }
+}
+
 async function proceedWithSource(): Promise<void> {
   if (!sourceRgba) return;
   showStatus(statusPill, 'Building…', 0);
   await new Promise<void>(r => setTimeout(r, 0));
+  await runFaceDetection();
   if (useDepthAI) {
     await runDepthEstimation();
   } else {

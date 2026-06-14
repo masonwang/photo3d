@@ -167,6 +167,84 @@ export function rgbaToLuminance(src, p) {
     const grey = rgbaToGrey(src);
     return applyImageParams(grey, W, H, p);
 }
+export function computeFocusMap(n, faceMin, faceMax, density = 4) {
+    const map = new Float32Array(n);
+    if (n <= 1) {
+        if (n === 1) map[0] = 0.5;
+        return map;
+    }
+    const fa = Math.max(0, Math.min(1, faceMin));
+    const fb = Math.max(0, Math.min(1, faceMax));
+    if (fa >= fb || density <= 1) {
+        for(let i = 0; i < n; i++)map[i] = i / (n - 1);
+        return map;
+    }
+    const d = density;
+    const totalW = 1 + (fb - fa) * (d - 1);
+    const cwFaceStart = fa / totalW;
+    const cwFaceEnd = (fa + (fb - fa) * d) / totalW;
+    for(let i = 0; i < n; i++){
+        const g = i / (n - 1);
+        let u;
+        if (g <= cwFaceStart) {
+            u = g * totalW;
+        } else if (g <= cwFaceEnd) {
+            u = fa + (g - cwFaceStart) * totalW / d;
+        } else {
+            u = fb + (g - cwFaceEnd) * totalW;
+        }
+        map[i] = Math.max(0, Math.min(1, u));
+    }
+    return map;
+}
+export function resampleRgbaFocused(src, gridW, gridH, colMap, rowMap) {
+    const out = new Uint8ClampedArray(gridW * gridH * 4);
+    for(let j = 0; j < gridH; j++){
+        const fy = rowMap[j] * (src.height - 1);
+        const y0 = Math.max(0, Math.floor(fy));
+        const y1 = Math.min(src.height - 1, y0 + 1);
+        const dy = fy - y0;
+        for(let i = 0; i < gridW; i++){
+            const fx = colMap[i] * (src.width - 1);
+            const x0 = Math.max(0, Math.floor(fx));
+            const x1 = Math.min(src.width - 1, x0 + 1);
+            const dx = fx - x0;
+            const di = (j * gridW + i) * 4;
+            for(let c = 0; c < 4; c++){
+                const v00 = src.data[(y0 * src.width + x0) * 4 + c];
+                const v10 = src.data[(y0 * src.width + x1) * 4 + c];
+                const v01 = src.data[(y1 * src.width + x0) * 4 + c];
+                const v11 = src.data[(y1 * src.width + x1) * 4 + c];
+                out[di + c] = Math.round(v00 * (1 - dx) * (1 - dy) + v10 * dx * (1 - dy) + v01 * (1 - dx) * dy + v11 * dx * dy);
+            }
+        }
+    }
+    return {
+        width: gridW,
+        height: gridH,
+        data: out
+    };
+}
+export function resampleFloat32Focused(src, srcW, srcH, colMap, rowMap) {
+    const gridW = colMap.length, gridH = rowMap.length;
+    const out = new Float32Array(gridW * gridH);
+    for(let j = 0; j < gridH; j++){
+        const fy = rowMap[j] * (srcH - 1);
+        const y0 = Math.max(0, Math.floor(fy));
+        const y1 = Math.min(srcH - 1, y0 + 1);
+        const dy = fy - y0;
+        for(let i = 0; i < gridW; i++){
+            const fx = colMap[i] * (srcW - 1);
+            const x0 = Math.max(0, Math.floor(fx));
+            const x1 = Math.min(srcW - 1, x0 + 1);
+            const dx = fx - x0;
+            const v00 = src[y0 * srcW + x0], v10 = src[y0 * srcW + x1];
+            const v01 = src[y1 * srcW + x0], v11 = src[y1 * srcW + x1];
+            out[j * gridW + i] = v00 * (1 - dx) * (1 - dy) + v10 * dx * (1 - dy) + v01 * (1 - dx) * dy + v11 * dx * dy;
+        }
+    }
+    return out;
+}
 function clamp01(v) {
     return v < 0 ? 0 : v > 1 ? 1 : v;
 }

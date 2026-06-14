@@ -80,7 +80,9 @@ export class Preview {
   private mesh: THREE.Mesh | null = null;
   private geometry: THREE.BufferGeometry | null = null;
   private litLights: THREE.Light[] = [];
+  private litBackLights: THREE.Light[] = [];  // extra back lights for cylinder mode
   private backlitLights: THREE.Light[] = [];
+  private isLamp = false;
   private mode: RenderMode = 'lit';
   private renderRequested = false;
   private resizeObserver: ResizeObserver;
@@ -121,6 +123,13 @@ export class Preview {
     fill.position.set(-150, 60, 100);
     const amb = new THREE.AmbientLight(0xffffff, 0.35);
     this.litLights = [key, fill, amb];
+
+    // --- Lit back lights: mirror images of key+fill for cylinder/lamp mode ---
+    const keyBack = new THREE.DirectionalLight(0xffffff, 1.6);
+    keyBack.position.set(-120, 200, -200);
+    const fillBack = new THREE.DirectionalLight(0xffffff, 0.4);
+    fillBack.position.set(150, 60, -100);
+    this.litBackLights = [keyBack, fillBack];
 
     // --- Backlit setup: faint ambient only; shader handles all brightness ---
     const ambBack = new THREE.AmbientLight(0xffeedd, 0.02);
@@ -274,12 +283,19 @@ export class Preview {
     this.backlitUniforms.uYMid.value = yMid;
   }
 
+  setIsLamp(v: boolean): void {
+    this.isLamp = v;
+    this.applyMode(this.mode);
+    this.requestRender();
+  }
+
   private applyMode(mode: RenderMode): void {
     // Clear all current lights
-    [...this.litLights, ...this.backlitLights].forEach(l => this.scene.remove(l));
+    [...this.litLights, ...this.litBackLights, ...this.backlitLights].forEach(l => this.scene.remove(l));
 
     if (mode === 'lit' || mode === 'wireframe') {
       this.litLights.forEach(l => this.scene.add(l));
+      if (this.isLamp) this.litBackLights.forEach(l => this.scene.add(l));
       this.scene.background = new THREE.Color(0xefeee9);
     } else if (mode === 'backlit') {
       this.backlitLights.forEach(l => this.scene.add(l));

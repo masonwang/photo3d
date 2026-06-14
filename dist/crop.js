@@ -60,6 +60,8 @@ export function showCropModal(sourceRgba, onConfirm, onSkip, onCancel = ()=>{}) 
     let cropRect = null;
     let dragging = false;
     let startX = 0, startY = 0;
+    const scaleX = ()=>canvasW / sourceRgba.width;
+    const scaleY = ()=>canvasH / sourceRgba.height;
     function normalizeRect(r) {
         let x = r.w >= 0 ? r.x : r.x + r.w;
         let y = r.h >= 0 ? r.y : r.y + r.h;
@@ -203,12 +205,12 @@ export function showCropModal(sourceRgba, onConfirm, onSkip, onCancel = ()=>{}) 
     applyBtn.addEventListener('click', async ()=>{
         if (!cropRect) return;
         const nr = normalizeRect(cropRect);
-        const scaleX = sourceRgba.width / canvasW;
-        const scaleY = sourceRgba.height / canvasH;
-        const ix = Math.round(nr.x * scaleX);
-        const iy = Math.round(nr.y * scaleY);
-        const iw = Math.max(1, Math.round(nr.w * scaleX));
-        const ih = Math.max(1, Math.round(nr.h * scaleY));
+        const sx = scaleX();
+        const sy = scaleY();
+        const ix = Math.round(nr.x / sx);
+        const iy = Math.round(nr.y / sy);
+        const iw = Math.max(1, Math.round(nr.w / sx));
+        const ih = Math.max(1, Math.round(nr.h / sy));
         const croppedRgba = cropRgba(sourceRgba, ix, iy, iw, ih);
         const tmpCanvas = document.createElement('canvas');
         tmpCanvas.width = iw;

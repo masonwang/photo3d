@@ -1,11 +1,12 @@
 import { ParamStore, HOT_KEYS, COLD_KEYS } from './store.js';
-import { decodeImageToRgba, resampleRgba, rgbaToLuminance, rgbaToGrey, resampleFloat32Bilinear, applyImageParams } from './image-processor.js';
+import { decodeImageToRgba, resampleRgba, resampleRgbaFocused, rgbaToLuminance, rgbaToGrey, resampleFloat32Bilinear, resampleFloat32Focused, applyImageParams, computeFocusMap } from './image-processor.js';
 import { buildCurvedMesh, addBaseMesh, updateFrontCurved } from './mesh-generator.js';
 import { meshToBinaryStl, validateBinaryStlBuffer } from './stl-writer.js';
 import { Preview } from './preview.js';
 import { mountControls, showStatus } from './ui.js';
 import { estimateDepth } from './depth-estimator.js';
 import { showCropModal } from './crop.js';
+import { detectFaceRegions } from './face-detector.js';
 const store = new ParamStore();
 const controlsHost = document.getElementById('controls');
 const previewHost = document.getElementById('preview-canvas');
@@ -30,6 +31,7 @@ let originalBlob = null;
 let lastLum = null;
 let lastMesh = null;
 let lastRawDepth = null;
+let lastFaceRegions = [];
 let useDepthAI = true;
 let depthBlend = 0.7;
 const { commonHost } = mountControls(controlsHost, store, (_shapeId)=>{});
@@ -42,7 +44,12 @@ function updateDims() {
     const w = lastMesh.bbox.max[0] - lastMesh.bbox.min[0];
     const h = lastMesh.bbox.max[1] - lastMesh.bbox.min[1];
     const triCount = lastMesh.indices.length / 3;
-    dimsEl.textContent = `${w.toFixed(0)} × ${h.toFixed(0)} × ${p.maxThicknessMm.toFixed(1)} mm · ${triCount.toLocaleString()} triangles`;
+    let text = `${w.toFixed(0)} × ${h.toFixed(0)} × ${p.maxThicknessMm.toFixed(1)} mm · ${triCount.toLocaleString()} triangles`;
+    if (lastFaceRegions.length > 0) {
+        const faceRes = p.pixelsPerMm * 5;
+        text += ` · face: ${faceRes.toFixed(0)} px/mm`;
+    }
+    dimsEl.textContent = text;
     dimsEl.style.display = 'block';
 }
 function gridSize() {
@@ -62,21 +69,36 @@ function gridSize() {
         gridH
     };
 }
-function deriveLuminance(gridW, gridH) {
+function buildFocusMaps(gridW, gridH) {
+    if (lastFaceRegions.length === 0) return null;
+    let minX = 1, minY = 1, maxX = 0, maxY = 0;
+    for (const r of lastFaceRegions){
+        if (r.x < minX) minX = r.x;
+        if (r.y < minY) minY = r.y;
+        if (r.x + r.w > maxX) maxX = r.x + r.w;
+        if (r.y + r.h > maxY) maxY = r.y + r.h;
+    }
+    if (maxX <= minX || maxY <= minY) return null;
+    return {
+        colMap: computeFocusMap(gridW, minX, maxX, 5),
+        rowMap: computeFocusMap(gridH, minY, maxY, 5)
+    };
+}
+function deriveLuminance(gridW, gridH, focus) {
     const p = store.get();
     if (useDepthAI && lastRawDepth) {
-        const depth = resampleFloat32Bilinear(lastRawDepth.data, lastRawDepth.width, lastRawDepth.height, gridW, gridH);
+        const depth = focus ? resampleFloat32Focused(lastRawDepth.data, lastRawDepth.width, lastRawDepth.height, focus.colMap, focus.rowMap) : resampleFloat32Bilinear(lastRawDepth.data, lastRawDepth.width, lastRawDepth.height, gridW, gridH);
         if (depthBlend >= 1) {
             return applyImageParams(depth, gridW, gridH, p);
         }
-        const photo = rgbaToGrey(resampleRgba(sourceRgba, gridW, gridH));
+        const photo = rgbaToGrey(focus ? resampleRgbaFocused(sourceRgba, gridW, gridH, focus.colMap, focus.rowMap) : resampleRgba(sourceRgba, gridW, gridH));
         const mixed = new Float32Array(gridW * gridH);
         for(let i = 0; i < mixed.length; i++){
             mixed[i] = depthBlend * depth[i] + (1 - depthBlend) * photo[i];
         }
         return applyImageParams(mixed, gridW, gridH, p);
     }
-    const resampled = resampleRgba(sourceRgba, gridW, gridH);
+    const resampled = focus ? resampleRgbaFocused(sourceRgba, gridW, gridH, focus.colMap, focus.rowMap) : resampleRgba(sourceRgba, gridW, gridH);
     return rgbaToLuminance(resampled, p);
 }
 function curvedParams(p) {
@@ -92,14 +114,15 @@ function buildAndShow() {
     if (!sourceRgba) return;
     const p = store.get();
     const { gridW, gridH } = gridSize();
-    const lum = deriveLuminance(gridW, gridH);
+    const focus = buildFocusMaps(gridW, gridH);
+    const lum = deriveLuminance(gridW, gridH, focus);
     lastLum = lum;
     const cp = curvedParams(p);
     const panel = buildCurvedMesh({
         width: lum.width,
         height: lum.height,
         data: lum.data
-    }, cp);
+    }, cp, focus?.colMap, focus?.rowMap);
     const arcRad = cp.arcDeg * Math.PI / 180;
     const R = cp.widthMm / arcRad;
     const mesh = addBaseMesh(panel, {
@@ -109,6 +132,7 @@ function buildAndShow() {
     lastMesh = mesh;
     const yMid = (panel.bbox.min[1] + panel.bbox.max[1]) / 2;
     preview.setLightCenter(R, yMid);
+    preview.setIsLamp(cp.arcDeg >= 360);
     preview.setMesh(mesh);
     emptyMsg.style.display = 'none';
     downloadBtn.disabled = false;
@@ -118,13 +142,14 @@ function hotZUpdate() {
     if (!sourceRgba || !lastMesh || !lastLum) return;
     const p = store.get();
     const { gridW, gridH } = gridSize();
-    const lum = deriveLuminance(gridW, gridH);
+    const focus = buildFocusMaps(gridW, gridH);
+    const lum = deriveLuminance(gridW, gridH, focus);
     lastLum = lum;
     updateFrontCurved(lastMesh.positions, {
         width: lum.width,
         height: lum.height,
         data: lum.data
-    }, curvedParams(p));
+    }, curvedParams(p), lastMesh.colMap);
     preview.notifyZUpdated();
     updateDims();
 }
@@ -145,10 +170,29 @@ store.subscribe(COLD_KEYS, ()=>{
     if (!sourceRgba) return;
     scheduleColdRebuild();
 });
+async function runFaceDetection() {
+    if (!sourceRgba) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = sourceRgba.width;
+    canvas.height = sourceRgba.height;
+    canvas.getContext('2d').putImageData(new ImageData(sourceRgba.data, sourceRgba.width, sourceRgba.height), 0, 0);
+    try {
+        const regions = await detectFaceRegions(canvas, (msg)=>showStatus(statusPill, msg, 0));
+        lastFaceRegions = regions.map((r)=>({
+                x: r.x / sourceRgba.width,
+                y: r.y / sourceRgba.height,
+                w: r.width / sourceRgba.width,
+                h: r.height / sourceRgba.height
+            }));
+    } catch  {
+        lastFaceRegions = [];
+    }
+}
 async function proceedWithSource() {
     if (!sourceRgba) return;
     showStatus(statusPill, 'Building…', 0);
     await new Promise((r)=>setTimeout(r, 0));
+    await runFaceDetection();
     if (useDepthAI) {
         await runDepthEstimation();
     } else {

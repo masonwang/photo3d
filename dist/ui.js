@@ -43,11 +43,61 @@ export const SHAPES = [
             heightMm: 0,
             minThicknessMm: 0.5,
             maxThicknessMm: 2.0,
-            pixelsPerMm: 10,
+            pixelsPerMm: 4,
             borderMm: 0,
             baseExtendMm: 2,
             baseHeightMm: 2,
             baseTabWidthMm: 2,
+            mirror: false,
+            invert: true,
+            gamma: 1.0,
+            brightness: 0,
+            contrast: 30,
+            smoothingPx: 1,
+            asciiStl: false
+        }
+    },
+    {
+        id: 'lamp',
+        name: 'Lamp',
+        shapeGroups: [
+            {
+                title: 'Geometry',
+                controls: [
+                    {
+                        kind: 'range',
+                        key: 'widthMm',
+                        label: 'Diameter',
+                        min: 20,
+                        max: 300,
+                        step: 5,
+                        format: (v)=>`${v.toFixed(0)} mm`,
+                        toDisplay: (s)=>Math.round(s / Math.PI),
+                        toStore: (d)=>d * Math.PI
+                    },
+                    {
+                        kind: 'range',
+                        key: 'heightMm',
+                        label: 'Height',
+                        min: 0,
+                        max: 300,
+                        step: 1,
+                        format: (v)=>v === 0 ? 'auto' : `${v.toFixed(0)} mm`
+                    }
+                ]
+            }
+        ],
+        defaults: {
+            widthMm: 100 * Math.PI,
+            arcDeg: 360,
+            heightMm: 0,
+            minThicknessMm: 0.5,
+            maxThicknessMm: 2.0,
+            pixelsPerMm: 4,
+            borderMm: 0,
+            baseExtendMm: 2,
+            baseHeightMm: 2,
+            baseTabWidthMm: 0,
             mirror: false,
             invert: true,
             gamma: 1.0,
@@ -84,8 +134,8 @@ const COMMON_GROUPS = [
                 kind: 'range',
                 key: 'pixelsPerMm',
                 label: 'Resolution',
-                min: 4,
-                max: 14,
+                min: 3,
+                max: 20,
                 step: 1,
                 format: (v)=>`${v.toFixed(0)} px/mm`
             }
@@ -204,6 +254,7 @@ export function mountControls(host, store, onShapeChange) {
     const inputEls = new Map();
     const valueEls = new Map();
     const formatFns = new Map();
+    const displayFns = new Map();
     let shapeKeys = new Set();
     let currentShape = SHAPES[0];
     function buildControl(c, container, trackSet) {
@@ -221,19 +272,23 @@ export function mountControls(host, store, onShapeChange) {
             input.max = String(c.max);
             input.step = String(c.step);
             const cur = store.get()[c.key];
-            input.value = String(cur);
+            const toDisplay = c.toDisplay ?? ((v)=>v);
+            const toStore = c.toStore ?? ((v)=>v);
+            const displayCur = toDisplay(cur);
+            input.value = String(displayCur);
             const valEl = document.createElement('span');
             valEl.className = 'value';
-            valEl.textContent = c.format ? c.format(cur) : String(cur);
+            valEl.textContent = c.format ? c.format(displayCur) : String(displayCur);
             input.addEventListener('input', ()=>{
                 const v = Number(input.value);
-                store.set(c.key, v);
+                store.set(c.key, toStore(v));
                 valEl.textContent = c.format ? c.format(v) : String(v);
             });
             row.appendChild(input);
             row.appendChild(valEl);
             valueEls.set(c.key, valEl);
             formatFns.set(c.key, c.format);
+            displayFns.set(c.key, c.toDisplay);
         } else {
             const input = document.createElement('input');
             input.type = 'checkbox';
@@ -263,11 +318,13 @@ export function mountControls(host, store, onShapeChange) {
             if (el.type === 'checkbox') {
                 el.checked = Boolean(v);
             } else {
-                el.value = String(v);
+                const displayFn = displayFns.get(k);
+                const displayVal = displayFn ? displayFn(v) : v;
+                el.value = String(displayVal);
                 const valEl = valueEls.get(k);
                 if (valEl) {
                     const fmt = formatFns.get(k);
-                    valEl.textContent = fmt ? fmt(v) : String(v);
+                    valEl.textContent = fmt ? fmt(displayVal) : String(displayVal);
                 }
             }
         }
@@ -294,6 +351,7 @@ export function mountControls(host, store, onShapeChange) {
             inputEls.delete(k);
             valueEls.delete(k);
             formatFns.delete(k);
+            displayFns.delete(k);
         }
         shapeKeys = new Set();
         shapeParamsHost.innerHTML = '';

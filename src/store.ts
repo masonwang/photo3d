@@ -37,7 +37,7 @@ export const defaultParams: Params = {
   widthMm: 100,
   minThicknessMm: 0.5,
   maxThicknessMm: 2.0,
-  pixelsPerMm: 10,
+  pixelsPerMm: 4,
   arcDeg: 90,
   heightMm: 0,
   mirror: false,
